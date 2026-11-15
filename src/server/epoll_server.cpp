@@ -275,7 +275,19 @@ void EventLoop::add_connection(Fd socket, Clock::time_point now) {
         c = conn.get();
         // The map slot is created empty and filled afterwards, so if creating
         // it throws, `conn` still owns the connection and closes it.
-        conns_.emplace(fd, nullptr).first->second = std::move(conn);
+        auto slot = conns_.emplace(fd, nullptr);
+        // The key must be new. Every key in conns_ is the descriptor of a
+        // socket that is still open: close_conn() moves the connection out of
+        // the map first, and its descriptor is closed only when the graveyard
+        // is cleared after the batch. An open descriptor's number cannot be
+        // handed out again, so accept4() never returns a live key. If that
+        // ever broke, overwriting the slot would free a Conn that epoll and
+        // the timer lists still point to; refusing the new socket is safer.
+        if (!slot.second) {
+            log_msg(LogLevel::Error, "accept returned descriptor %d, which is still in use; dropping it", fd);
+            return;  // `conn` closes the new socket; the existing entry is untouched
+        }
+        slot.first->second = std::move(conn);
         update_deadline(c, now);  // the idle clock starts at accept; allocates a timer-list node
     } catch (const std::exception& e) {
         // Destroying the Conn closes the socket. If the Conn was never made,
