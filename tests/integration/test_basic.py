@@ -56,6 +56,18 @@ def test_post_echo(srv):
 
 
 @shared
+def test_large_body_at_limit(srv):
+    # Exactly the default --max-body-bytes (1 MiB): accepted whole, even
+    # though it arrives over many reads.
+    body = bytes(ord("a") + i % 26 for i in range(1048576))
+    r = srv.request(req("POST", "/api/echo", body=body))
+    check(r.status == 200, r)
+    doc = json.loads(r.body)
+    check(doc["body_length"] == len(body), doc["body_length"])
+    check(doc["body"].encode() == body, "echoed body differs")
+
+
+@shared
 def test_users_param(srv):
     r = srv.request(get("/api/users/42"))
     check(r.status == 200, r)
