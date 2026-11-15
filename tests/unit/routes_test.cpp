@@ -1,8 +1,9 @@
+#include "app/routes.h"
+
 #include <string>
 #include <thread>
 #include <vector>
 
-#include "app/routes.h"
 #include "config.h"
 #include "http/router.h"
 #include "server/stats.h"
@@ -112,7 +113,7 @@ TEST(stats_record_classes) {
     s.record(404);
     s.record(302);
     s.record(503);
-    s.record(99);   // out of range counts as 5xx
+    s.record(99);  // out of range counts as 5xx
     s.record(700);
     CHECK_EQ(s.requests_total.load(), 6u);
     CHECK_EQ(s.responses_2xx.load(), 1u);

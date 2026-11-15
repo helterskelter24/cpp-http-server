@@ -31,7 +31,9 @@ const char* level_name(LogLevel level) {
 
 }  // namespace
 
-void log_set_level(LogLevel level) { g_level.store(static_cast<int>(level), std::memory_order_relaxed); }
+void log_set_level(LogLevel level) {
+    g_level.store(static_cast<int>(level), std::memory_order_relaxed);
+}
 
 LogLevel log_level() { return static_cast<LogLevel>(g_level.load(std::memory_order_relaxed)); }
 
@@ -48,8 +50,8 @@ void log_msg(LogLevel level, const char* fmt, ...) {
     char stamp[32];
     std::strftime(stamp, sizeof stamp, "%Y-%m-%d %H:%M:%S", &tm_parts);
 
-    int n = snprintf(buf, sizeof buf, "%s.%03d [%s] ", stamp, static_cast<int>(ts.tv_nsec / 1000000),
-                     level_name(level));
+    int n = snprintf(buf, sizeof buf, "%s.%03d [%s] ", stamp,
+                     static_cast<int>(ts.tv_nsec / 1000000), level_name(level));
     if (n < 0) return;
     size_t len = static_cast<size_t>(n);
 

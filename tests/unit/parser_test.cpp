@@ -1,6 +1,7 @@
+#include "http/parser.h"
+
 #include <string>
 
-#include "http/parser.h"
 #include "test.h"
 
 using namespace hs;
@@ -303,10 +304,10 @@ TEST(parser_bad_headers) {
     expect_error("GET / HTTP/1.1\r\nHost: h\x01z\r\n\r\n", 400);
     expect_error("GET / HTTP/1.1\r\nHost: h\x7f\r\n\r\n", 400);
     expect_error(std::string("GET / HTTP/1.1\r\nHost: h") + '\0' + "x\r\n\r\n", 400);
-    expect_error("GET / HTTP/1.1\r\nHost: h\n\r\n", 400);          // bare LF in the value
-    expect_error("GET / HTTP/1.1\nHost: h\r\n\r\n", 400);          // bare LF after request line
-    expect_error("GET / HTTP/1.1\r\nHost: h\r\n\n", 400);          // bare LF as blank line
-    expect_error("GET / HTTP/1.1\r\nHost: h\r\r\n\r\n", 400);      // CR not followed by LF
+    expect_error("GET / HTTP/1.1\r\nHost: h\n\r\n", 400);           // bare LF in the value
+    expect_error("GET / HTTP/1.1\nHost: h\r\n\r\n", 400);           // bare LF after request line
+    expect_error("GET / HTTP/1.1\r\nHost: h\r\n\n", 400);           // bare LF as blank line
+    expect_error("GET / HTTP/1.1\r\nHost: h\r\r\n\r\n", 400);       // CR not followed by LF
     expect_error("GET / HTTP/1.1\r\nHost: h\r\n: v\r\n\r\n", 400);  // empty name
     expect_error("GET / HTTP/1.1\r\nHo st: h\r\n\r\n", 400);
     expect_error("GET / HTTP/1.1\r\nHo(st: h\r\n\r\n", 400);
@@ -327,21 +328,34 @@ TEST(parser_header_values_and_names) {
     CHECK(h.get("x-high") != nullptr && *h.get("x-high") == "caf\xC3\xA9");
     CHECK(h.get("x-dup") != nullptr && *h.get("x-dup") == "1");  // first match
     CHECK_EQ(h.all()[7].first, "x-dup");
-    CHECK_EQ(h.all()[7].second, "2");                             // duplicates kept in order
+    CHECK_EQ(h.all()[7].second, "2");  // duplicates kept in order
     CHECK(h.get("Upper-Name") != nullptr);
     CHECK_EQ(h.all()[8].first, "upper-name");
 }
 
 TEST(parser_content_length_cases) {
-    const char* bad[] = {"abc", "-1", "+1", "1 2", "", "1,2", "0x10", "5 5", "123456789012345678901234567890",
+    const char* bad[] = {"abc",
+                         "-1",
+                         "+1",
+                         "1 2",
+                         "",
+                         "1,2",
+                         "0x10",
+                         "5 5",
+                         "123456789012345678901234567890",
                          "18446744073709551616"};
     for (const char* value : bad) {
-        expect_error(std::string("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: ") + value + "\r\n\r\n", 400);
+        expect_error(
+            std::string("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: ") + value + "\r\n\r\n",
+            400);
     }
-    expect_error("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nab", 400);
-    expect_error("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\nContent-Length: 2x\r\n\r\nab", 400);
+    expect_error("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\nab",
+                 400);
+    expect_error("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\nContent-Length: 2x\r\n\r\nab",
+                 400);
 
-    Outcome same = parse("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\nab");
+    Outcome same =
+        parse("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 2\r\nContent-Length: 2\r\n\r\nab");
     CHECK_EQ(same.result.status, ParseStatus::Complete);
     CHECK_EQ(same.request.body, "ab");
 }
@@ -360,7 +374,8 @@ TEST(parser_content_length_edge_values) {
     Outcome padded = parse("POST / HTTP/1.1\r\nHost: h\r\nContent-Length:  2 \r\n\r\nab");
     CHECK_EQ(padded.result.status, ParseStatus::Complete);
     // Numerically equal repeats are the same length, whatever the spelling.
-    Outcome repeat = parse("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 02\r\nContent-Length: 2\r\n\r\nab");
+    Outcome repeat =
+        parse("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 02\r\nContent-Length: 2\r\n\r\nab");
     CHECK_EQ(repeat.result.status, ParseStatus::Complete);
     // No Content-Length means no body, even for POST.
     Outcome none = parse("POST / HTTP/1.1\r\nHost: h\r\n\r\nGET");
@@ -373,7 +388,9 @@ TEST(parser_transfer_encoding) {
     expect_error("POST / HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked\r\n\r\n", 501);
     expect_error("POST / HTTP/1.1\r\nHost: h\r\ntransfer-encoding: identity\r\n\r\n", 501);
     // With Content-Length as well this is the classic smuggling shape: still refused.
-    expect_error("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\nabcd", 501);
+    expect_error(
+        "POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 4\r\nTransfer-Encoding: chunked\r\n\r\nabcd",
+        501);
 }
 
 TEST(parser_header_limit) {
@@ -393,15 +410,17 @@ TEST(parser_header_limit_boundary) {
     CHECK_EQ(at.result.status, ParseStatus::Complete);
     expect_error(kGet, 431, header_limit(26));
     // The body does not count towards the header limit.
-    Outcome body = parse("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 100\r\n\r\n" + std::string(100, 'x'),
-                         header_limit(60));
+    Outcome body =
+        parse("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 100\r\n\r\n" + std::string(100, 'x'),
+              header_limit(60));
     CHECK_EQ(body.result.status, ParseStatus::Complete);
 }
 
 TEST(parser_body_limit) {
     // Refused from the headers alone: no body byte has been fed.
     expect_error("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 11\r\n\r\n", 413, body_limit(10));
-    Outcome at = parse("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 10\r\n\r\n0123456789", body_limit(10));
+    Outcome at =
+        parse("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 10\r\n\r\n0123456789", body_limit(10));
     CHECK_EQ(at.result.status, ParseStatus::Complete);
     CHECK_EQ(at.request.body.size(), 10);
     expect_error("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 99999999999999999999\r\n\r\n", 400);
@@ -458,7 +477,8 @@ TEST(parser_error_is_sticky) {
 
 TEST(parser_reset_clears_everything) {
     HttpParser parser;
-    std::string first = "POST /a?q=1 HTTP/1.0\r\nContent-Length: 2\r\nX-A: 1\r\nConnection: keep-alive\r\n\r\nab";
+    std::string first =
+        "POST /a?q=1 HTTP/1.0\r\nContent-Length: 2\r\nX-A: 1\r\nConnection: keep-alive\r\n\r\nab";
     ParseResult r = parser.feed(first.data(), first.size());
     CHECK_EQ(r.status, ParseStatus::Complete);
     CHECK(parser.request().keep_alive);

@@ -1,14 +1,16 @@
+#include "http/response.h"
+
 #include <string>
 
 #include "http/request.h"
-#include "http/response.h"
 #include "test.h"
 
 using namespace hs;
 
 namespace {
 bool ends_with(const std::string& s, const std::string& suffix) {
-    return s.size() >= suffix.size() && s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
+    return s.size() >= suffix.size() &&
+           s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0;
 }
 bool contains(const std::string& s, const std::string& part) {
     return s.find(part) != std::string::npos;
@@ -54,9 +56,7 @@ TEST(error_body) {
     CHECK_EQ(r.body, R"({"error":{"status":404,"message":"Not Found"}})");
 }
 
-TEST(http_date_format) {
-    CHECK_EQ(http_date(784111777), "Sun, 06 Nov 1994 08:49:37 GMT");
-}
+TEST(http_date_format) { CHECK_EQ(http_date(784111777), "Sun, 06 Nov 1994 08:49:37 GMT"); }
 
 TEST(reason_phrases) {
     CHECK_EQ(reason_phrase(200), "OK");

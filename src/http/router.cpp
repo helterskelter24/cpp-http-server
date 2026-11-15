@@ -45,7 +45,7 @@ bool more_specific(const std::vector<std::string>& a, const std::vector<std::str
 }
 
 // Allow lists methods in one fixed order whatever the registration order was.
-constexpr Method kAllowOrder[] = {Method::GET,    Method::HEAD,  Method::POST,   Method::PUT,
+constexpr Method kAllowOrder[] = {Method::GET,     Method::HEAD,  Method::POST,   Method::PUT,
                                   Method::DELETE_, Method::PATCH, Method::OPTIONS};
 
 }  // namespace
@@ -76,7 +76,8 @@ Response Router::dispatch(Request& req) const {
         path_known = true;
         allowed[static_cast<int>(route.method)] = true;
         if (route.method != wanted) continue;
-        // On a tie the first registered route wins, since only a strictly more specific one replaces it.
+        // On a tie the first registered route wins, since only a strictly more specific one
+        // replaces it.
         if (best == nullptr || more_specific(route.segments, best->segments)) best = &route;
     }
 
@@ -111,8 +112,8 @@ Response Router::dispatch(Request& req) const {
     try {
         return (*handler)(req);
     } catch (const std::exception& e) {
-        log_msg(LogLevel::Error, "handler for %s %s threw: %s", std::string(method_name(req.method)).c_str(),
-                req.path.c_str(), e.what());
+        log_msg(LogLevel::Error, "handler for %s %s threw: %s",
+                std::string(method_name(req.method)).c_str(), req.path.c_str(), e.what());
     } catch (...) {
         log_msg(LogLevel::Error, "handler for %s %s threw a non-standard exception",
                 std::string(method_name(req.method)).c_str(), req.path.c_str());

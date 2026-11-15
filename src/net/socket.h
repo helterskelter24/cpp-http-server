@@ -24,8 +24,8 @@ public:
 
     int get() const { return fd_; }
     bool valid() const { return fd_ >= 0; }
-    int release();             // give up ownership without closing
-    void reset(int fd = -1);   // close the current fd (if any) and own `fd`
+    int release();            // give up ownership without closing
+    void reset(int fd = -1);  // close the current fd (if any) and own `fd`
 
 private:
     int fd_ = -1;

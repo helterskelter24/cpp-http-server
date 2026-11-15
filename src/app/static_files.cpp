@@ -126,7 +126,8 @@ Response StaticFiles::serve(const Request& req) const {
     int saved_errno = errno;
     close(fd);
     if (!ok) {
-        log_msg(LogLevel::Error, "read of '%s' failed: %s", resolved.c_str(), strerror(saved_errno));
+        log_msg(LogLevel::Error, "read of '%s' failed: %s", resolved.c_str(),
+                strerror(saved_errno));
         return Response::error(500);
     }
 

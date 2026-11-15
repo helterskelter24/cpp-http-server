@@ -67,9 +67,11 @@ bool values_equal(const A& a, const B& b) {
     if constexpr (std::is_integral_v<A> && std::is_integral_v<B> &&
                   std::is_signed_v<A> != std::is_signed_v<B>) {
         if constexpr (std::is_signed_v<A>) {
-            return a >= 0 && static_cast<unsigned long long>(a) == static_cast<unsigned long long>(b);
+            return a >= 0 &&
+                   static_cast<unsigned long long>(a) == static_cast<unsigned long long>(b);
         } else {
-            return b >= 0 && static_cast<unsigned long long>(a) == static_cast<unsigned long long>(b);
+            return b >= 0 &&
+                   static_cast<unsigned long long>(a) == static_cast<unsigned long long>(b);
         }
     } else {
         return a == b;
@@ -90,13 +92,13 @@ void check_eq(const char* file, int line, const char* a_text, const char* b_text
 
 }  // namespace hs_test
 
-#define TEST(name)                                                       \
-    static void test_##name();                                           \
-    static ::hs_test::Registrar registrar_##name(#name, &test_##name);   \
+#define TEST(name)                                                     \
+    static void test_##name();                                         \
+    static ::hs_test::Registrar registrar_##name(#name, &test_##name); \
     static void test_##name()
 
-#define CHECK(cond)                                                      \
-    do {                                                                 \
+#define CHECK(cond)                                                        \
+    do {                                                                   \
         if (!(cond)) ::hs_test::report_failure(__FILE__, __LINE__, #cond); \
     } while (0)
 

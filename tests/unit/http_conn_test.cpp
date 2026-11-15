@@ -1,3 +1,5 @@
+#include "server/http_conn.h"
+
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -7,7 +9,6 @@
 
 #include "config.h"
 #include "http/router.h"
-#include "server/http_conn.h"
 #include "server/stats.h"
 #include "test.h"
 
@@ -21,8 +22,9 @@ struct Fixture {
     hs::Stats stats;
     hs::Router router;
     Fixture() {
-        router.add(hs::Method::GET, "/health",
-                   [](const hs::Request&) { return hs::Response::json(200, "{\"status\":\"ok\"}"); });
+        router.add(hs::Method::GET, "/health", [](const hs::Request&) {
+            return hs::Response::json(200, "{\"status\":\"ok\"}");
+        });
         router.add(hs::Method::POST, "/api/echo",
                    [](const hs::Request& req) { return hs::Response::text(200, req.body); });
         router.add(hs::Method::GET, "/big", [](const hs::Request&) {
@@ -306,8 +308,8 @@ TEST(http_conn_input_bounded_under_pipelining) {
 
     std::string client_stream;  // requests generated but not yet sent
     unsigned next_request = 0;
-    std::string out;            // server's unsent output
-    std::string received;       // bytes the client has read, not yet parsed
+    std::string out;       // server's unsent output
+    std::string received;  // bytes the client has read, not yet parsed
     unsigned next_expected = 0;
     size_t max_pending = 0;
     unsigned reads = 0;
@@ -315,8 +317,8 @@ TEST(http_conn_input_bounded_under_pipelining) {
     for (int cycle = 0; cycle < 300; ++cycle) {
         if (conn.wants_input() && out.size() < hs::kOutputHighWater) {  // rule (a)
             while (client_stream.size() < kReadChunk)
-                client_stream += "GET /seq/" + std::to_string(next_request++) +
-                                 " HTTP/1.1\r\nHost: x\r\n\r\n";
+                client_stream +=
+                    "GET /seq/" + std::to_string(next_request++) + " HTTP/1.1\r\nHost: x\r\n\r\n";
             conn.on_data(client_stream.data(), kReadChunk);
             client_stream.erase(0, kReadChunk);
             ++reads;
@@ -349,7 +351,7 @@ TEST(http_conn_input_bounded_under_pipelining) {
     }
 
     CHECK(max_pending <= kReadChunk);
-    CHECK(reads > 5);              // the loop really went around the read path
-    CHECK(next_expected > 1000);   // and the client got many responses in order
+    CHECK(reads > 5);             // the loop really went around the read path
+    CHECK(next_expected > 1000);  // and the client got many responses in order
     CHECK(next_expected <= conn.requests_served());
 }

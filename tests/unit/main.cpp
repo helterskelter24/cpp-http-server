@@ -19,7 +19,8 @@ int main(int argc, char** argv) {
         try {
             test.fn();
         } catch (const std::exception& e) {
-            hs_test::report_failure(test.name.c_str(), 0, std::string("uncaught exception: ") + e.what());
+            hs_test::report_failure(test.name.c_str(), 0,
+                                    std::string("uncaught exception: ") + e.what());
         } catch (...) {
             hs_test::report_failure(test.name.c_str(), 0, "uncaught non-standard exception");
         }

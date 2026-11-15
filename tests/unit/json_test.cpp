@@ -1,7 +1,8 @@
+#include "http/json.h"
+
 #include <cmath>
 #include <string>
 
-#include "http/json.h"
 #include "test.h"
 
 using namespace hs;
@@ -22,7 +23,11 @@ TEST(json_writer_nested) {
     w.key("b").value(static_cast<int64_t>(-3));
     w.key("c").value(true);
     w.key("d").null();
-    w.key("e").begin_array().value(static_cast<int64_t>(1)).value(static_cast<int64_t>(2)).end_array();
+    w.key("e")
+        .begin_array()
+        .value(static_cast<int64_t>(1))
+        .value(static_cast<int64_t>(2))
+        .end_array();
     w.end_object();
     CHECK_EQ(w.str(), R"({"a":"x","b":-3,"c":true,"d":null,"e":[1,2]})");
 }
@@ -38,6 +43,13 @@ TEST(json_writer_numbers) {
 
 TEST(json_writer_empty_containers_and_escaped_key) {
     JsonWriter w;
-    w.begin_object().key("k\"").begin_array().end_array().key("o").begin_object().end_object().end_object();
+    w.begin_object()
+        .key("k\"")
+        .begin_array()
+        .end_array()
+        .key("o")
+        .begin_object()
+        .end_object()
+        .end_object();
     CHECK_EQ(w.str(), R"({"k\"":[],"o":{}})");
 }

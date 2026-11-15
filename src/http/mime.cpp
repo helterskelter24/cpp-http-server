@@ -15,18 +15,10 @@ struct MimeEntry {
 // Small on purpose: a linear scan over a dozen entries is cheaper and simpler
 // than a hash map.
 constexpr MimeEntry kTable[] = {
-    {"html", "text/html"},
-    {"css", "text/css"},
-    {"js", "application/javascript"},
-    {"json", "application/json"},
-    {"txt", "text/plain"},
-    {"png", "image/png"},
-    {"jpg", "image/jpeg"},
-    {"jpeg", "image/jpeg"},
-    {"gif", "image/gif"},
-    {"svg", "image/svg+xml"},
-    {"ico", "image/x-icon"},
-    {"pdf", "application/pdf"},
+    {"html", "text/html"},        {"css", "text/css"},     {"js", "application/javascript"},
+    {"json", "application/json"}, {"txt", "text/plain"},   {"png", "image/png"},
+    {"jpg", "image/jpeg"},        {"jpeg", "image/jpeg"},  {"gif", "image/gif"},
+    {"svg", "image/svg+xml"},     {"ico", "image/x-icon"}, {"pdf", "application/pdf"},
     {"wasm", "application/wasm"},
 };
 

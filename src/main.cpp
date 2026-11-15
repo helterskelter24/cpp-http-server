@@ -54,8 +54,7 @@ int main(int argc, char** argv) {
         return 1;
     }
     if (!S_ISDIR(st.st_mode)) {
-        hs::log_msg(hs::LogLevel::Error, "root directory %s: not a directory",
-                    config.root.c_str());
+        hs::log_msg(hs::LogLevel::Error, "root directory %s: not a directory", config.root.c_str());
         return 1;
     }
 

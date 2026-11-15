@@ -39,10 +39,8 @@ bool HttpConn::process(std::string& out) {
         Request& req = parser_.request();
         Response resp = router_.dispatch(req);
         ++served_;
-        bool keep_alive =
-            req.keep_alive && !draining_ && served_ < config_.max_keepalive_requests;
-        emit(resp, method_name(req.method), req.path, keep_alive, req.method == Method::HEAD,
-             out);
+        bool keep_alive = req.keep_alive && !draining_ && served_ < config_.max_keepalive_requests;
+        emit(resp, method_name(req.method), req.path, keep_alive, req.method == Method::HEAD, out);
         parser_.reset();
         if (!keep_alive) {
             finish();

@@ -1,3 +1,5 @@
+#include "logger.h"
+
 #include <unistd.h>
 
 #include <cstdio>
@@ -5,7 +7,6 @@
 #include <thread>
 #include <vector>
 
-#include "logger.h"
 #include "test.h"
 
 namespace {
@@ -51,7 +52,8 @@ bool split_line(const std::string& line, const std::string& level, std::string& 
     const size_t n = sizeof kShape - 1;
     if (line.size() < n) return false;
     for (size_t i = 0; i < n; ++i) {
-        if (kShape[i] == 'd' ? !(line[i] >= '0' && line[i] <= '9') : line[i] != kShape[i]) return false;
+        if (kShape[i] == 'd' ? !(line[i] >= '0' && line[i] <= '9') : line[i] != kShape[i])
+            return false;
     }
     std::string tag = "[" + level + "] ";
     if (line.compare(n, tag.size(), tag) != 0) return false;
@@ -135,7 +137,8 @@ TEST(logger_threads_do_not_interleave) {
         if (nl == std::string::npos) break;
         std::string rest;
         CHECK(split_line(out.substr(pos, nl - pos), "INFO", rest));
-        CHECK(rest.rfind("thread=", 0) == 0 && rest.size() > 4 && rest.compare(rest.size() - 4, 4, " end") == 0);
+        CHECK(rest.rfind("thread=", 0) == 0 && rest.size() > 4 &&
+              rest.compare(rest.size() - 4, 4, " end") == 0);
         ++lines;
         pos = nl + 1;
     }
@@ -146,7 +149,9 @@ TEST(logger_escapes_control_bytes) {
     hs::log_set_level(hs::LogLevel::Info);
     StderrCapture cap;
     // A decoded request path could carry these; they must not forge a second line.
-    hs::log_msg(hs::LogLevel::Info, "path=%s", "/a\nFAKE [ERROR] x\r\x1b[31m\x7f" "end");
+    hs::log_msg(hs::LogLevel::Info, "path=%s",
+                "/a\nFAKE [ERROR] x\r\x1b[31m\x7f"
+                "end");
     std::string out = cap.take();
     CHECK(out.find('\n') == out.size() - 1);
     CHECK(out.find('\r') == std::string::npos);

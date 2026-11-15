@@ -284,7 +284,8 @@ void EventLoop::add_connection(Fd socket, Clock::time_point now) {
         // ever broke, overwriting the slot would free a Conn that epoll and
         // the timer lists still point to; refusing the new socket is safer.
         if (!slot.second) {
-            log_msg(LogLevel::Error, "accept returned descriptor %d, which is still in use; dropping it", fd);
+            log_msg(LogLevel::Error,
+                    "accept returned descriptor %d, which is still in use; dropping it", fd);
             return;  // `conn` closes the new socket; the existing entry is untouched
         }
         slot.first->second = std::move(conn);

@@ -4,7 +4,9 @@ namespace hs {
 
 namespace {
 // Not std::tolower: that depends on the C locale and on int/unsigned char conversions.
-char to_lower_ascii(char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; }
+char to_lower_ascii(char c) {
+    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+}
 
 std::string lower(std::string_view s) {
     std::string out(s);

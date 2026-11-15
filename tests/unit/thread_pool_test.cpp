@@ -1,10 +1,11 @@
+#include "server/thread_pool.h"
+
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
 #include <thread>
 
-#include "server/thread_pool.h"
 #include "test.h"
 
 namespace {

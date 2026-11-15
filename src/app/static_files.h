@@ -33,8 +33,8 @@ private:
     // realpath plus the containment check; empty string means "not servable".
     std::string resolve_inside_root(const std::string& candidate) const;
 
-    std::string root_;        // canonical, no trailing slash (except "/")
-    std::string root_prefix_; // root_ + "/" (just "/" for the filesystem root)
+    std::string root_;         // canonical, no trailing slash (except "/")
+    std::string root_prefix_;  // root_ + "/" (just "/" for the filesystem root)
     bool root_ok_ = false;
 };
 

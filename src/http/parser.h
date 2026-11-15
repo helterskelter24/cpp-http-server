@@ -42,7 +42,7 @@ public:
     // Error it keeps returning Error. Neither state ever touches the data.
     ParseResult feed(const char* data, size_t len);
 
-    Request& request() { return request_; }  // valid after Complete
+    Request& request() { return request_; }    // valid after Complete
     bool started() const { return started_; }  // any request byte consumed since reset
     void reset();
 
@@ -62,8 +62,8 @@ private:
     ParserLimits limits_;
     State state_ = State::RequestLine;
     Request request_;
-    std::string line_;          // the header-section line being assembled, CR included
-    size_t head_bytes_ = 0;     // request line + headers + blank line, for max_header_bytes
+    std::string line_;       // the header-section line being assembled, CR included
+    size_t head_bytes_ = 0;  // request line + headers + blank line, for max_header_bytes
     bool started_ = false;
     int error_status_ = 0;
 

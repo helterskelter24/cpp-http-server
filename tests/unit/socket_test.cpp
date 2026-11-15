@@ -1,3 +1,5 @@
+#include "net/socket.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -7,7 +9,6 @@
 #include <string>
 #include <utility>
 
-#include "net/socket.h"
 #include "test.h"
 
 namespace {

@@ -1,3 +1,5 @@
+#include "http/router.h"
+
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -6,7 +8,6 @@
 #include <thread>
 #include <vector>
 
-#include "http/router.h"
 #include "test.h"
 
 namespace {

@@ -8,7 +8,7 @@ enum class Color { Red, Green };
 
 TEST(check_eq_mixed_sign_and_size) {
     std::vector<int> v = {1, 2};
-    CHECK_EQ(v.size(), 2);          // size_t vs int literal
+    CHECK_EQ(v.size(), 2);  // size_t vs int literal
     CHECK_EQ(2, v.size());
     CHECK_EQ(static_cast<unsigned>(3), 3L);
 }

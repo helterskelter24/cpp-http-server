@@ -95,10 +95,21 @@ ConfigResult parse_args(int argc, const char* const* argv) {
             continue;
         }
 
-        static const char* const kValueFlags[] = {
-            "--mode", "--bind", "--port", "--threads", "--root", "--backlog", "--queue-capacity",
-            "--request-timeout", "--keepalive-timeout", "--write-timeout", "--shutdown-grace",
-            "--max-keepalive-requests", "--max-header-bytes", "--max-body-bytes", "--log-level"};
+        static const char* const kValueFlags[] = {"--mode",
+                                                  "--bind",
+                                                  "--port",
+                                                  "--threads",
+                                                  "--root",
+                                                  "--backlog",
+                                                  "--queue-capacity",
+                                                  "--request-timeout",
+                                                  "--keepalive-timeout",
+                                                  "--write-timeout",
+                                                  "--shutdown-grace",
+                                                  "--max-keepalive-requests",
+                                                  "--max-header-bytes",
+                                                  "--max-body-bytes",
+                                                  "--log-level"};
         bool known = false;
         for (const char* f : kValueFlags) known = known || name == f;
         if (!known) return fail(name, "unknown flag");
@@ -127,7 +138,8 @@ ConfigResult parse_args(int argc, const char* const* argv) {
             else return fail(name, "expected debug, info, warn or error");
         } else if (name == "--request-timeout" || name == "--keepalive-timeout" ||
                    name == "--write-timeout" || name == "--shutdown-grace") {
-            if (!parse_seconds(value, ms)) return fail(name, "expected seconds between 0 and 86400");
+            if (!parse_seconds(value, ms))
+                return fail(name, "expected seconds between 0 and 86400");
             if (name == "--request-timeout") c.request_timeout = ms;
             else if (name == "--keepalive-timeout") c.keepalive_timeout = ms;
             else if (name == "--write-timeout") c.write_timeout = ms;
@@ -142,16 +154,20 @@ ConfigResult parse_args(int argc, const char* const* argv) {
             if (!parse_uint(value, 65535, n) || n < 1) return fail(name, "expected 1-65535");
             c.backlog = static_cast<int>(n);
         } else if (name == "--queue-capacity") {
-            if (!parse_uint(value, 1ULL << 32, n) || n < 1) return fail(name, "expected at least 1");
+            if (!parse_uint(value, 1ULL << 32, n) || n < 1)
+                return fail(name, "expected at least 1");
             c.queue_capacity = static_cast<size_t>(n);
         } else if (name == "--max-keepalive-requests") {
-            if (!parse_uint(value, 1ULL << 31, n) || n < 1) return fail(name, "expected at least 1");
+            if (!parse_uint(value, 1ULL << 31, n) || n < 1)
+                return fail(name, "expected at least 1");
             c.max_keepalive_requests = static_cast<unsigned>(n);
         } else if (name == "--max-header-bytes") {
-            if (!parse_uint(value, 1ULL << 32, n) || n < 64) return fail(name, "expected at least 64");
+            if (!parse_uint(value, 1ULL << 32, n) || n < 64)
+                return fail(name, "expected at least 64");
             c.max_header_bytes = static_cast<size_t>(n);
         } else if (name == "--max-body-bytes") {
-            if (!parse_uint(value, 1ULL << 40, n)) return fail(name, "expected a non-negative number");
+            if (!parse_uint(value, 1ULL << 40, n))
+                return fail(name, "expected a non-negative number");
             c.max_body_bytes = static_cast<size_t>(n);
         }
     }
@@ -160,26 +176,25 @@ ConfigResult parse_args(int argc, const char* const* argv) {
 }
 
 std::string usage() {
-    return
-        "Usage: httpserver [options]\n"
-        "  --mode pool|epoll          concurrency model (default: epoll)\n"
-        "  --bind ADDR                address to listen on (default: 0.0.0.0)\n"
-        "  --port N                   TCP port, 0 picks a free one (default: 8080)\n"
-        "  --threads N                worker threads, 1-1024 (default: CPU count)\n"
-        "  --root DIR                 static file root (default: ./www)\n"
-        "  --backlog N                listen backlog, 1-65535 (default: 1024)\n"
-        "  --queue-capacity N         pool mode connection queue size (default: 1024)\n"
-        "  --request-timeout SEC      time to receive a full request (default: 10)\n"
-        "  --keepalive-timeout SEC    idle time between requests (default: 5)\n"
-        "  --write-timeout SEC        time to send a response (default: 10)\n"
-        "  --shutdown-grace SEC       time to finish in-flight requests on exit (default: 5)\n"
-        "  --max-keepalive-requests N requests per connection (default: 1000)\n"
-        "  --max-header-bytes N       request head size limit, at least 64 (default: 8192)\n"
-        "  --max-body-bytes N         request body size limit (default: 1048576)\n"
-        "  --log-level LEVEL          debug|info|warn|error (default: info)\n"
-        "  --access-log               log one line per request (default: off)\n"
-        "  --help                     show this text\n"
-        "Timeouts are in seconds and may be fractional, e.g. 0.5; maximum 86400.\n";
+    return "Usage: httpserver [options]\n"
+           "  --mode pool|epoll          concurrency model (default: epoll)\n"
+           "  --bind ADDR                address to listen on (default: 0.0.0.0)\n"
+           "  --port N                   TCP port, 0 picks a free one (default: 8080)\n"
+           "  --threads N                worker threads, 1-1024 (default: CPU count)\n"
+           "  --root DIR                 static file root (default: ./www)\n"
+           "  --backlog N                listen backlog, 1-65535 (default: 1024)\n"
+           "  --queue-capacity N         pool mode connection queue size (default: 1024)\n"
+           "  --request-timeout SEC      time to receive a full request (default: 10)\n"
+           "  --keepalive-timeout SEC    idle time between requests (default: 5)\n"
+           "  --write-timeout SEC        time to send a response (default: 10)\n"
+           "  --shutdown-grace SEC       time to finish in-flight requests on exit (default: 5)\n"
+           "  --max-keepalive-requests N requests per connection (default: 1000)\n"
+           "  --max-header-bytes N       request head size limit, at least 64 (default: 8192)\n"
+           "  --max-body-bytes N         request body size limit (default: 1048576)\n"
+           "  --log-level LEVEL          debug|info|warn|error (default: info)\n"
+           "  --access-log               log one line per request (default: off)\n"
+           "  --help                     show this text\n"
+           "Timeouts are in seconds and may be fractional, e.g. 0.5; maximum 86400.\n";
 }
 
 }  // namespace hs

@@ -44,11 +44,11 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <condition_variable>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
-#include <condition_variable>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -137,10 +137,19 @@ Parse parse_args(int argc, char** argv, Options& o, std::string& message) {
     for (int i = 1; i < argc; ++i) {
         const std::string name = argv[i];
         if (name == "--help" || name == "-h") return Parse::Help;
-        if (name == "--no-keepalive") { o.keepalive = false; continue; }
-        if (name == "--csv") { o.csv = true; continue; }
+        if (name == "--no-keepalive") {
+            o.keepalive = false;
+            continue;
+        }
+        if (name == "--csv") {
+            o.csv = true;
+            continue;
+        }
 
-        if (i + 1 >= argc) { message = "option " + name + " needs a value"; return Parse::Error; }
+        if (i + 1 >= argc) {
+            message = "option " + name + " needs a value";
+            return Parse::Error;
+        }
         const char* value = argv[++i];
         long n = 0;
         double d = 0;
@@ -149,10 +158,14 @@ Parse parse_args(int argc, char** argv, Options& o, std::string& message) {
             o.host = value;
         } else if (name == "--port") {
             ok = parse_int(value, 1, 65535, n);
-            if (ok) { o.port = static_cast<int>(n); have_port = true; }
+            if (ok) {
+                o.port = static_cast<int>(n);
+                have_port = true;
+            }
         } else if (name == "--path") {
             o.path = value;
-            ok = !o.path.empty() && o.path[0] == '/' && o.path.find_first_of(" \r\n") == std::string::npos;
+            ok = !o.path.empty() && o.path[0] == '/' &&
+                 o.path.find_first_of(" \r\n") == std::string::npos;
         } else if (name == "-c") {
             ok = parse_int(value, 1, 1000000, n);
             if (ok) o.connections = static_cast<int>(n);
@@ -180,9 +193,15 @@ Parse parse_args(int argc, char** argv, Options& o, std::string& message) {
             message = "unknown option " + name;
             return Parse::Error;
         }
-        if (!ok) { message = "invalid value '" + std::string(value) + "' for " + name; return Parse::Error; }
+        if (!ok) {
+            message = "invalid value '" + std::string(value) + "' for " + name;
+            return Parse::Error;
+        }
     }
-    if (!have_port) { message = "--port is required"; return Parse::Error; }
+    if (!have_port) {
+        message = "--port is required";
+        return Parse::Error;
+    }
     return Parse::Run;
 }
 
@@ -195,7 +214,8 @@ bool find_header(std::string_view head, std::string_view name, std::string_view&
     while (pos != std::string_view::npos && pos + 2 < head.size()) {
         const size_t start = pos + 2;
         const size_t eol = head.find("\r\n", start);
-        const std::string_view line = head.substr(start, eol == std::string_view::npos ? eol : eol - start);
+        const std::string_view line =
+            head.substr(start, eol == std::string_view::npos ? eol : eol - start);
         const size_t colon = line.find(':');
         if (colon == name.size()) {
             bool same = true;
@@ -219,7 +239,9 @@ bool find_header(std::string_view head, std::string_view name, std::string_view&
 bool iequals(std::string_view a, std::string_view b) {
     if (a.size() != b.size()) return false;
     for (size_t i = 0; i < a.size(); ++i) {
-        const auto lower = [](char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c; };
+        const auto lower = [](char c) {
+            return c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
+        };
         if (lower(a[i]) != lower(b[i])) return false;
     }
     return true;
@@ -235,7 +257,8 @@ void print_error_kinds(FILE* out, const uint64_t (&by_kind)[kErrorKinds]) {
     const char* sep = "";
     for (int k = 0; k < kErrorKinds; ++k) {
         if (by_kind[k] == 0) continue;
-        std::fprintf(out, "%s%s %llu", sep, kErrorNames[k], static_cast<unsigned long long>(by_kind[k]));
+        std::fprintf(out, "%s%s %llu", sep, kErrorNames[k],
+                     static_cast<unsigned long long>(by_kind[k]));
         sep = ", ";
     }
 }
@@ -269,17 +292,17 @@ enum class State { Connecting, Ready, Sending, Reading, Backoff, Idle };
 
 struct Conn {
     int fd = -1;
-    bool idle = false;       // an --idle connection: never sends
+    bool idle = false;  // an --idle connection: never sends
     State state = State::Backoff;
-    uint32_t watching = 0;   // epoll events currently registered; 0 = not registered
-    size_t sent = 0;         // bytes of the request already written
-    std::string in;          // response bytes received so far
-    size_t head_len = 0;     // length of status line + headers + blank line; 0 until seen
+    uint32_t watching = 0;  // epoll events currently registered; 0 = not registered
+    size_t sent = 0;        // bytes of the request already written
+    std::string in;         // response bytes received so far
+    size_t head_len = 0;    // length of status line + headers + blank line; 0 until seen
     uint64_t body_len = 0;
     int status = 0;
     bool server_closes = false;  // response said "Connection: close"
-    TimePoint req_start;     // start of the request in flight (or of the connect attempt)
-    TimePoint retry_at;      // when a Backoff connection may reconnect
+    TimePoint req_start;         // start of the request in flight (or of the connect attempt)
+    TimePoint retry_at;          // when a Backoff connection may reconnect
 };
 
 // Lets every thread finish its setup before any of them starts measuring, and
@@ -318,10 +341,15 @@ private:
 
 class Worker {
 public:
-    Worker(const Options& o, const sockaddr_in& addr, std::string request, int connections, int idle)
-        : opt_(o), addr_(addr), request_(std::move(request)),
-          timeout_(std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(o.timeout))),
-          conns_(static_cast<size_t>(connections)), idle_(static_cast<size_t>(idle)) {
+    Worker(const Options& o, const sockaddr_in& addr, std::string request, int connections,
+           int idle)
+        : opt_(o),
+          addr_(addr),
+          request_(std::move(request)),
+          timeout_(std::chrono::duration_cast<Clock::duration>(
+              std::chrono::duration<double>(o.timeout))),
+          conns_(static_cast<size_t>(connections)),
+          idle_(static_cast<size_t>(idle)) {
         result_.latencies_ns.reserve(kReserveSamples);
         for (Conn& c : idle_) c.idle = true;
     }
@@ -343,7 +371,8 @@ public:
     // connection is retried once the run starts, and counted as an error there.
     void setup() {
         ep_ = ::epoll_create1(EPOLL_CLOEXEC);
-        if (ep_ < 0) throw std::runtime_error(std::string("epoll_create1: ") + std::strerror(errno));
+        if (ep_ < 0)
+            throw std::runtime_error(std::string("epoll_create1: ") + std::strerror(errno));
 
         const TimePoint begin = Clock::now();
         for (Conn& c : idle_) open_idle(c);
@@ -352,26 +381,32 @@ public:
         std::vector<epoll_event> events(256);
         while (connecting() > 0) {
             if (Clock::now() - begin > timeout_) {
-                throw std::runtime_error(std::to_string(connecting()) + " connection(s) not established within " +
-                                         std::to_string(opt_.timeout) + " s (--timeout); setup aborted");
+                throw std::runtime_error(
+                    std::to_string(connecting()) + " connection(s) not established within " +
+                    std::to_string(opt_.timeout) + " s (--timeout); setup aborted");
             }
             const int n = ::epoll_wait(ep_, events.data(), static_cast<int>(events.size()), 10);
-            if (n < 0 && errno != EINTR) throw std::runtime_error(std::string("epoll_wait: ") + std::strerror(errno));
+            if (n < 0 && errno != EINTR)
+                throw std::runtime_error(std::string("epoll_wait: ") + std::strerror(errno));
             for (int i = 0; i < n; ++i) {
-                on_event(*static_cast<Conn*>(events[static_cast<size_t>(i)].data.ptr), events[static_cast<size_t>(i)].events);
+                on_event(*static_cast<Conn*>(events[static_cast<size_t>(i)].data.ptr),
+                         events[static_cast<size_t>(i)].events);
             }
         }
         if (result_.idle_failed > 0) {
             throw std::runtime_error(std::to_string(result_.idle_failed) +
-                                     " idle connection(s) could not be opened; the run would not hold the requested --idle");
+                                     " idle connection(s) could not be opened; the run would not "
+                                     "hold the requested --idle");
         }
     }
 
     // The measured run; call after setup() and after every thread has finished
     // its setup. `start` is the common start time.
     void run(TimePoint start) {
-        warm_end_ = start + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(opt_.warmup));
-        end_ = warm_end_ + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(opt_.duration));
+        warm_end_ = start + std::chrono::duration_cast<Clock::duration>(
+                                std::chrono::duration<double>(opt_.warmup));
+        end_ = warm_end_ + std::chrono::duration_cast<Clock::duration>(
+                               std::chrono::duration<double>(opt_.duration));
         setting_up_ = false;
         const TimePoint begin = Clock::now();
         for (Conn& c : conns_) {
@@ -390,10 +425,13 @@ public:
             // While connections wait to reconnect, poll quickly; otherwise the
             // wake-up only exists so timeouts and the end of the run are noticed.
             const int wait_ms = backoff_.empty() ? static_cast<int>(kScanInterval.count()) : 1;
-            const int n = ::epoll_wait(ep_, events.data(), static_cast<int>(events.size()), wait_ms);
-            if (n < 0 && errno != EINTR) throw std::runtime_error(std::string("epoll_wait: ") + std::strerror(errno));
+            const int n =
+                ::epoll_wait(ep_, events.data(), static_cast<int>(events.size()), wait_ms);
+            if (n < 0 && errno != EINTR)
+                throw std::runtime_error(std::string("epoll_wait: ") + std::strerror(errno));
             for (int i = 0; i < n; ++i) {
-                on_event(*static_cast<Conn*>(events[static_cast<size_t>(i)].data.ptr), events[static_cast<size_t>(i)].events);
+                on_event(*static_cast<Conn*>(events[static_cast<size_t>(i)].data.ptr),
+                         events[static_cast<size_t>(i)].events);
             }
             const TimePoint now = Clock::now();
             reconnect_due(now);
@@ -455,7 +493,8 @@ private:
         ev.events = events;
         ev.data.ptr = &c;
         const int op = c.watching == 0 ? EPOLL_CTL_ADD : EPOLL_CTL_MOD;
-        if (::epoll_ctl(ep_, op, c.fd, &ev) < 0) throw std::runtime_error(std::string("epoll_ctl: ") + std::strerror(errno));
+        if (::epoll_ctl(ep_, op, c.fd, &ev) < 0)
+            throw std::runtime_error(std::string("epoll_ctl: ") + std::strerror(errno));
         c.watching = events;
     }
 
@@ -569,7 +608,8 @@ private:
     // connection failed (it is then already queued for reconnect).
     bool try_send(Conn& c) {
         while (c.sent < request_.size()) {
-            const ssize_t n = ::send(c.fd, request_.data() + c.sent, request_.size() - c.sent, MSG_NOSIGNAL);
+            const ssize_t n =
+                ::send(c.fd, request_.data() + c.sent, request_.size() - c.sent, MSG_NOSIGNAL);
             if (n > 0) {
                 c.sent += static_cast<size_t>(n);
             } else if (n < 0 && errno == EINTR) {
@@ -593,26 +633,25 @@ private:
             return;
         }
         switch (c.state) {
-        case State::Connecting:
-            if (socket_error(c.fd) != 0) {
-                fail(c, kConnect, Clock::now());
-            } else if (ev & EPOLLOUT) {
-                connected(c);
-            }
-            return;
-        case State::Ready:  // the server closed or sent something before we asked
-            fail(c, kReset, Clock::now());
-            return;
-        case State::Sending:
-            if ((ev & EPOLLOUT) && !try_send(c)) return;
-            if (ev & (EPOLLIN | EPOLLERR | EPOLLHUP)) on_readable(c);
-            return;
-        case State::Reading:
-            if (ev & (EPOLLIN | EPOLLERR | EPOLLHUP)) on_readable(c);
-            return;
-        case State::Backoff:
-        case State::Idle:
-            return;
+            case State::Connecting:
+                if (socket_error(c.fd) != 0) {
+                    fail(c, kConnect, Clock::now());
+                } else if (ev & EPOLLOUT) {
+                    connected(c);
+                }
+                return;
+            case State::Ready:  // the server closed or sent something before we asked
+                fail(c, kReset, Clock::now());
+                return;
+            case State::Sending:
+                if ((ev & EPOLLOUT) && !try_send(c)) return;
+                if (ev & (EPOLLIN | EPOLLERR | EPOLLHUP)) on_readable(c);
+                return;
+            case State::Reading:
+                if (ev & (EPOLLIN | EPOLLERR | EPOLLHUP)) on_readable(c);
+                return;
+            case State::Backoff:
+            case State::Idle: return;
         }
     }
 
@@ -666,7 +705,8 @@ private:
                 return;
             }
             std::string_view connection;
-            c.server_closes = find_header(head, "connection", connection) && iequals(connection, "close");
+            c.server_closes =
+                find_header(head, "connection", connection) && iequals(connection, "close");
             c.head_len = end + 4;
         }
 
@@ -684,8 +724,8 @@ private:
             return;
         }
         if (c.req_start >= warm_end_ && now <= end_) {
-            result_.latencies_ns.push_back(
-                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now - c.req_start).count()));
+            result_.latencies_ns.push_back(static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(now - c.req_start).count()));
         }
         if (opt_.keepalive && !c.server_closes) {
             begin_request(c);
@@ -761,7 +801,8 @@ int run(const Options& o) {
         addrinfo* res = nullptr;
         const int rc = ::getaddrinfo(o.host.c_str(), nullptr, &hints, &res);
         if (rc != 0 || res == nullptr) {
-            std::fprintf(stderr, "loadgen: cannot resolve host '%s': %s\n", o.host.c_str(), ::gai_strerror(rc));
+            std::fprintf(stderr, "loadgen: cannot resolve host '%s': %s\n", o.host.c_str(),
+                         ::gai_strerror(rc));
             return 2;
         }
         addr = *reinterpret_cast<sockaddr_in*>(res->ai_addr);
@@ -769,7 +810,8 @@ int run(const Options& o) {
         addr.sin_port = htons(static_cast<uint16_t>(o.port));
     }
 
-    const int threads = std::min(o.threads, o.connections);  // a thread without connections is pointless
+    const int threads =
+        std::min(o.threads, o.connections);  // a thread without connections is pointless
     const rlim_t limit = raise_fd_limit();
     // One epoll descriptor per thread plus some for stdio, the resolver and so on.
     const unsigned long long needed = static_cast<unsigned long long>(o.connections) +
@@ -777,15 +819,17 @@ int run(const Options& o) {
                                       static_cast<unsigned long long>(threads) + 16;
     if (limit != RLIM_INFINITY && needed > limit) {
         std::fprintf(stderr,
-                     "loadgen: %d connections + %d idle need about %llu file descriptors but the limit is %llu "
+                     "loadgen: %d connections + %d idle need about %llu file descriptors but the "
+                     "limit is %llu "
                      "(raise it with ulimit -n or use fewer connections)\n",
                      o.connections, o.idle, needed, static_cast<unsigned long long>(limit));
         return 2;
     }
 
-    const std::string request = "GET " + o.path + " HTTP/1.1\r\nHost: " + o.host + ":" + std::to_string(o.port) +
-                                "\r\nUser-Agent: loadgen\r\nConnection: " + (o.keepalive ? "keep-alive" : "close") +
-                                "\r\n\r\n";
+    const std::string request =
+        "GET " + o.path + " HTTP/1.1\r\nHost: " + o.host + ":" + std::to_string(o.port) +
+        "\r\nUser-Agent: loadgen\r\nConnection: " + (o.keepalive ? "keep-alive" : "close") +
+        "\r\n\r\n";
 
     std::vector<std::unique_ptr<Worker>> workers;
     for (int i = 0; i < threads; ++i) {
@@ -843,11 +887,14 @@ int run(const Options& o) {
     const double max = all.empty() ? 0.0 : ms(all.back());
 
     if (o.csv) {
-        std::printf("%s,%d,%d,%d,%llu,%llu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\n", o.label.c_str(), o.connections, o.idle,
-                    o.keepalive ? 1 : 0, static_cast<unsigned long long>(requests),
+        std::printf("%s,%d,%d,%d,%llu,%llu,%.3f,%.3f,%.3f,%.3f,%.3f,%.3f\n", o.label.c_str(),
+                    o.connections, o.idle, o.keepalive ? 1 : 0,
+                    static_cast<unsigned long long>(requests),
                     static_cast<unsigned long long>(errors), o.duration, rps, p50, p95, p99, max);
         // stdout carries exactly one line; anything else goes to stderr.
-        if (idle_closed > 0) std::fprintf(stderr, "loadgen: idle_closed=%llu\n", static_cast<unsigned long long>(idle_closed));
+        if (idle_closed > 0)
+            std::fprintf(stderr, "loadgen: idle_closed=%llu\n",
+                         static_cast<unsigned long long>(idle_closed));
         if (errors > 0) {
             std::fprintf(stderr, "loadgen: errors: ");
             print_error_kinds(stderr, by_kind);
@@ -874,8 +921,11 @@ int run(const Options& o) {
         std::printf("idle_closed=%llu\n", static_cast<unsigned long long>(idle_closed));
     }
     if (grew) {
-        std::fprintf(stderr, "loadgen: warning: a thread recorded more than %zu samples; its sample buffer grew "
-                             "during the run and a few latencies may include the copy\n", kReserveSamples);
+        std::fprintf(
+            stderr,
+            "loadgen: warning: a thread recorded more than %zu samples; its sample buffer grew "
+            "during the run and a few latencies may include the copy\n",
+            kReserveSamples);
     }
     return requests == 0 ? 1 : 0;
 }
@@ -884,18 +934,16 @@ int run(const Options& o) {
 }  // namespace hs::bench
 
 int main(int argc, char** argv) {
-    std::signal(SIGPIPE, SIG_IGN);  // sends also use MSG_NOSIGNAL; this is the second line of defence
+    std::signal(SIGPIPE,
+                SIG_IGN);  // sends also use MSG_NOSIGNAL; this is the second line of defence
     hs::bench::Options options;
     std::string message;
     switch (hs::bench::parse_args(argc, argv, options, message)) {
-    case hs::bench::Parse::Help:
-        hs::bench::print_usage(stdout);
-        return 0;
-    case hs::bench::Parse::Error:
-        std::fprintf(stderr, "loadgen: %s (see --help)\n", message.c_str());
-        return 2;
-    case hs::bench::Parse::Run:
-        break;
+        case hs::bench::Parse::Help: hs::bench::print_usage(stdout); return 0;
+        case hs::bench::Parse::Error:
+            std::fprintf(stderr, "loadgen: %s (see --help)\n", message.c_str());
+            return 2;
+        case hs::bench::Parse::Run: break;
     }
     return hs::bench::run(options);
 }

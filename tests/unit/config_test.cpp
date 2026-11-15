@@ -1,9 +1,10 @@
+#include "config.h"
+
 #include <chrono>
 #include <string>
 #include <thread>
 #include <vector>
 
-#include "config.h"
 #include "test.h"
 
 namespace {
@@ -46,11 +47,36 @@ TEST(config_defaults) {
 }
 
 TEST(config_parses_all_flags_separate_value) {
-    auto r = parse({"--mode", "pool", "--bind", "127.0.0.1", "--port", "9090", "--threads", "3",
-                    "--root", "/srv/www", "--backlog", "128", "--queue-capacity", "16",
-                    "--request-timeout", "2", "--keepalive-timeout", "3", "--write-timeout", "4",
-                    "--shutdown-grace", "6", "--max-keepalive-requests", "7",
-                    "--max-header-bytes", "512", "--max-body-bytes", "0", "--log-level", "debug",
+    auto r = parse({"--mode",
+                    "pool",
+                    "--bind",
+                    "127.0.0.1",
+                    "--port",
+                    "9090",
+                    "--threads",
+                    "3",
+                    "--root",
+                    "/srv/www",
+                    "--backlog",
+                    "128",
+                    "--queue-capacity",
+                    "16",
+                    "--request-timeout",
+                    "2",
+                    "--keepalive-timeout",
+                    "3",
+                    "--write-timeout",
+                    "4",
+                    "--shutdown-grace",
+                    "6",
+                    "--max-keepalive-requests",
+                    "7",
+                    "--max-header-bytes",
+                    "512",
+                    "--max-body-bytes",
+                    "0",
+                    "--log-level",
+                    "debug",
                     "--access-log"});
     CHECK(r.ok);
     const hs::Config& c = r.config;
@@ -76,8 +102,8 @@ TEST(config_parses_all_flags_equals_form) {
     auto r = parse({"--mode=epoll", "--bind=::1", "--port=0", "--threads=5", "--root=/x",
                     "--backlog=64", "--queue-capacity=8", "--request-timeout=1.5",
                     "--keepalive-timeout=2", "--write-timeout=3", "--shutdown-grace=0.25",
-                    "--max-keepalive-requests=9", "--max-header-bytes=64",
-                    "--max-body-bytes=100", "--log-level=error", "--access-log"});
+                    "--max-keepalive-requests=9", "--max-header-bytes=64", "--max-body-bytes=100",
+                    "--log-level=error", "--access-log"});
     CHECK(r.ok);
     const hs::Config& c = r.config;
     CHECK(c.mode == hs::Mode::Epoll);

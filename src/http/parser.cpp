@@ -6,7 +6,9 @@ namespace hs {
 
 namespace {
 
-char to_lower_ascii(char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; }
+char to_lower_ascii(char c) {
+    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+}
 
 bool iequals(std::string_view a, std::string_view b) {
     if (a.size() != b.size()) return false;
@@ -35,11 +37,22 @@ bool is_control(char c) {
 bool is_token_char(char c) {
     if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return true;
     switch (c) {
-        case '!': case '#': case '$': case '%': case '&': case '\'': case '*': case '+':
-        case '-': case '.': case '^': case '_': case '`': case '|': case '~':
-            return true;
-        default:
-            return false;
+        case '!':
+        case '#':
+        case '$':
+        case '%':
+        case '&':
+        case '\'':
+        case '*':
+        case '+':
+        case '-':
+        case '.':
+        case '^':
+        case '_':
+        case '`':
+        case '|':
+        case '~': return true;
+        default: return false;
     }
 }
 

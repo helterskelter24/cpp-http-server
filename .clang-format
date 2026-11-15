@@ -1,3 +1,8 @@
 BasedOnStyle: Google
 IndentWidth: 4
 ColumnLimit: 100
+# Access specifiers flush with the class keyword, and short one-line if/else
+# chains and case labels kept on one line, as the code is written.
+AccessModifierOffset: -4
+AllowShortIfStatementsOnASingleLine: AllIfsAndElse
+AllowShortCaseLabelsOnASingleLine: true

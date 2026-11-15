@@ -19,8 +19,8 @@ struct Config {
     std::string root = "./www";
     int backlog = 1024;
     size_t queue_capacity = 1024;
-    std::chrono::milliseconds request_timeout{10000}, keepalive_timeout{5000},
-        write_timeout{10000}, shutdown_grace{5000};
+    std::chrono::milliseconds request_timeout{10000}, keepalive_timeout{5000}, write_timeout{10000},
+        shutdown_grace{5000};
     unsigned max_keepalive_requests = 1000;
     size_t max_header_bytes = 8192, max_body_bytes = 1048576;
     LogLevel log_level = LogLevel::Info;

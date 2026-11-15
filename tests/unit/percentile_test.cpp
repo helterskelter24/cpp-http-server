@@ -1,8 +1,9 @@
+#include "percentile.h"
+
 #include <cstdint>
 #include <numeric>
 #include <vector>
 
-#include "percentile.h"
 #include "test.h"
 
 namespace {

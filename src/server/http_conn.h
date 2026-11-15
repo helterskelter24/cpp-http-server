@@ -60,7 +60,7 @@ public:
     // True when the server may read more from the socket (rule (a) above):
     // the connection is still open and every buffered byte has been handled.
     bool wants_input() const { return !closed_ && !has_pending_input(); }
-    bool mid_request() const;        // a request has started but is not complete
+    bool mid_request() const;  // a request has started but is not complete
 
     // Shutdown has begun: every later response says Connection: close.
     void set_draining() { draining_ = true; }
