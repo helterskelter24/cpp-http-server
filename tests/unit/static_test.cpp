@@ -250,3 +250,24 @@ TEST(static_fallback_registration) {
     CHECK_EQ(r.status, 200);
     CHECK_EQ(r.body, "via router");
 }
+
+TEST(static_oversize_file_500) {
+    Site s;
+    // A sparse file: ftruncate sets the size without writing data, and serve()
+    // checks the size before reading, so this costs no disk space or time.
+    std::string path = s.root + "/huge.bin";
+    int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    CHECK(fd >= 0);
+    CHECK_EQ(ftruncate(fd, static_cast<off_t>(hs::kMaxStaticFileBytes + 1)), 0);
+    close(fd);
+    hs::StaticFiles files(s.root);
+    // The refusal is logged on purpose; keep the test output clean.
+    int saved = dup(STDERR_FILENO);
+    int null_fd = open("/dev/null", O_WRONLY);
+    dup2(null_fd, STDERR_FILENO);
+    close(null_fd);
+    hs::Response r = files.serve(get("/huge.bin"));
+    dup2(saved, STDERR_FILENO);
+    close(saved);
+    CHECK_EQ(r.status, 500);
+}
