@@ -44,6 +44,12 @@ def idle_cell(row):
     return row["idle"]
 
 
+def has_numbers(row):
+    """An ok row normally carries loadgen's numbers; one without them (loadgen
+    exited 0 but printed nothing) is reported as failed instead of crashing."""
+    return all(row[k] for k in ("rps", "p50_ms", "p95_ms", "p99_ms", "max_ms"))
+
+
 def table_rows(rows):
     out = ["| mode | connections | idle | req/s | p50 (ms) | p95 (ms) | p99 (ms) | max (ms) | errors |",
            "|---|---:|---:|---:|---:|---:|---:|---:|---|"]
@@ -51,8 +57,8 @@ def table_rows(rows):
         head = [r["mode"], r["connections"], idle_cell(r)]
         if r["status"] == "skipped":
             cells = ["", "", "", "", "", "skipped: " + r["note"]]
-        elif r["status"] == "failed":
-            reason = r["note"]
+        elif r["status"] == "failed" or not has_numbers(r):
+            reason = r["note"] or "loadgen printed no result"
             if r["errors"]:
                 reason += " (%s errors%s)" % (r["errors"], ": " + r["error_kinds"].replace(";", ",")
                                              if r["error_kinds"] else "")
@@ -119,7 +125,7 @@ def write_charts(results_dir, rows):
     def points(path, mode, field):
         return sorted((int(r["connections"]), float(r[field])) for r in rows
                       if r["scenario"] == "keepalive" and r["path"] == path
-                      and r["mode"] == mode and r["status"] == "ok")
+                      and r["mode"] == mode and r["status"] == "ok" and has_numbers(r))
 
     # p99 alone would hide a wait that hits fewer than 1 % of requests (pool
     # mode's wait for a free worker), so the latency chart also draws max.
