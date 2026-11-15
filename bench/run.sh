@@ -10,7 +10,9 @@
 # build/bench-quick/ so it never overwrites the published results.
 #
 # A run that fails (loadgen exit 1 or 2, a hang, a server that does not start)
-# becomes a row with status "failed" and the reason; the sweep goes on.
+# becomes a row with status "failed" and the reason; the sweep goes on. The
+# output files are replaced only when the whole sweep has finished, so an
+# interrupted sweep leaves the previous results as they were.
 
 set -euo pipefail
 
@@ -73,8 +75,38 @@ cmake --build "$BUILD" -j "$(nproc)" >/dev/null
 
 mkdir -p "$OUT"
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-CSV="$OUT/raw.csv"
+# Everything is written here first and moved into $OUT at the end.
+STAGE="$TMP/results"
+mkdir "$STAGE"
+CSV="$STAGE/raw.csv"
+
+# The server of the current run and its loadgen, while they are running.
+SERVER_PID=""
+LOADGEN_PID=""
+cleanup() {
+    # An interrupted sweep must not leave a server or loadgen behind.
+    # SIGTERM starts the server's graceful shutdown and makes timeout stop
+    # loadgen; SIGKILL follows for anything still running after 2 s.
+    local pid i
+    for pid in $LOADGEN_PID $SERVER_PID; do
+        kill -TERM "$pid" 2>/dev/null || true
+    done
+    for pid in $LOADGEN_PID $SERVER_PID; do
+        for i in $(seq 40); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 0.05
+        done
+        kill -KILL "$pid" 2>/dev/null || true
+    done
+    rm -rf "$TMP"
+}
+trap cleanup EXIT
+# Without these traps bash would not stop on Ctrl-C: it waits for the
+# foreground command, and `timeout` runs loadgen in a process group of its
+# own, so neither of them dies of the signal and bash carries on with the
+# next run. `exit` runs the EXIT trap above.
+trap 'echo "interrupted" >&2; exit 130' INT
+trap 'echo "terminated" >&2; exit 143' TERM
 
 # ---- environment.txt ----
 {
@@ -104,7 +136,7 @@ CSV="$OUT/raw.csv"
     echo "network:         loopback (127.0.0.1); client and server on the same machine, sharing its cores"
     echo "server:          --threads $SERVER_THREADS, access log off; pool mode adds ${POOL_FLAGS[*]}"
     echo "loadgen:         -t $LOADGEN_THREADS, --warmup $WARMUP, -d $DURATION, closed loop, --timeout 5 (default)"
-} > "$OUT/environment.txt"
+} > "$STAGE/environment.txt"
 
 echo "scenario,mode,path,server_threads,loadgen_threads,label,connections,idle,keepalive,requests,errors,duration_s,rps,p50_ms,p95_ms,p99_ms,max_ms,status,error_kinds,idle_closed,server_cpu_s,loadgen_cpu_s,server_exit,note" > "$CSV"
 
@@ -152,6 +184,7 @@ run_one() {
     local log="$TMP/server-$RUN.log"
     "$BUILD/httpserver" "${server_args[@]}" > /dev/null 2> "$log" &
     local spid=$!
+    SERVER_PID=$spid
 
     local port="" i
     for i in $(seq 100); do
@@ -163,6 +196,7 @@ run_one() {
     if [ -z "$port" ]; then
         kill -KILL "$spid" 2>/dev/null || true
         wait "$spid" 2>/dev/null || true
+        SERVER_PID=""
         echo "$prefix,$empty_numbers,failed,,,,,,server did not start: $(tail -1 "$log" | clean)" >> "$CSV"
         echo "[$RUN] $label: server did not start" >&2
         return
@@ -175,13 +209,19 @@ run_one() {
     # A run normally ends after warm-up + duration (+ up to 5 s of setup);
     # anything past 30 s more is a hang.
     local limit=$((WARMUP + DURATION + 30))
-    local cpu_before rc=0
+    local cpu_before rc=0 started=$SECONDS
     children_cpu
     cpu_before="$CHILD_CPU"
+    # In the background and waited for, because a trapped signal interrupts
+    # `wait` at once but would only be handled after a foreground command ends.
     timeout -k 5 "$limit" "$BUILD/loadgen" --host 127.0.0.1 --port "$port" --path "$path" \
         -c "$conns" "${idle_flag[@]}" "${ka_flag[@]}" -t "$LOADGEN_THREADS" \
         -d "$DURATION" --warmup "$WARMUP" --csv --label "$label" \
-        > "$TMP/loadgen.out" 2> "$TMP/loadgen.err" || rc=$?
+        > "$TMP/loadgen.out" 2> "$TMP/loadgen.err" &
+    LOADGEN_PID=$!
+    wait "$LOADGEN_PID" || rc=$?
+    LOADGEN_PID=""
+    local elapsed=$((SECONDS - started))
     local loadgen_cpu
     children_cpu
     loadgen_cpu="$(awk -v a="$CHILD_CPU" -v b="$cpu_before" 'BEGIN {printf "%.2f", a - b}')"
@@ -201,6 +241,7 @@ run_one() {
     fi
     server_exit=0
     wait "$spid" 2>/dev/null || server_exit=$?
+    SERVER_PID=""
 
     local kinds idle_closed problems
     kinds="$(sed -n 's/^loadgen: errors: //p' "$TMP/loadgen.err" | clean)"
@@ -215,6 +256,10 @@ run_one() {
         0)
             status=ok
             numbers="$(cut -d, -f2- "$TMP/loadgen.out")"
+            if [ -z "$numbers" ]; then
+                status=failed
+                note="${note}loadgen exited 0 but printed no result"
+            fi
             ;;
         1)
             status=failed
@@ -226,10 +271,21 @@ run_one() {
             numbers="$empty_numbers"
             note="${note}$(grep -v '^loadgen: errors: \|^loadgen: idle_closed=' "$TMP/loadgen.err" | tail -1 | sed 's/^loadgen: //' | clean)"
             ;;
-        124|137)
+        124)
             status=failed
             numbers="$empty_numbers"
-            note="${note}loadgen hung and was killed after $limit s"
+            note="${note}loadgen hung and was stopped after $limit s"
+            ;;
+        137)
+            # SIGKILL: from timeout's -k when loadgen ignored the first signal,
+            # or from outside (the OOM killer, a user). Only the first is a hang.
+            status=failed
+            numbers="$empty_numbers"
+            if [ "$elapsed" -ge "$limit" ]; then
+                note="${note}loadgen hung and was killed after $limit s"
+            else
+                note="${note}loadgen was killed (SIGKILL) after $elapsed s"
+            fi
             ;;
         *)
             status=failed
@@ -264,5 +320,14 @@ for mode in "${MODES[@]}"; do
     done
 done
 
-python3 "$ROOT/bench/report.py" "$OUT"
+python3 "$ROOT/bench/report.py" "$STAGE"
+# The sweep is complete: replace the previous results. A chart that was not
+# drawn this time (no matplotlib) is removed rather than left stale.
+for f in raw.csv environment.txt results.md throughput.png p99.png; do
+    if [ -e "$STAGE/$f" ]; then
+        mv -f "$STAGE/$f" "$OUT/$f"
+    else
+        rm -f "$OUT/$f"
+    fi
+done
 echo "results in $OUT" >&2
