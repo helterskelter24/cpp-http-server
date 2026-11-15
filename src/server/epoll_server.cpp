@@ -259,28 +259,42 @@ void EventLoop::accept_ready(Clock::time_point now) {
 
 void EventLoop::add_connection(Fd socket, Clock::time_point now) {
     set_no_delay(socket.get());
-    std::unique_ptr<Conn> conn;
+    const int fd = socket.get();
+    // Every step that allocates (and so can throw std::bad_alloc) comes before
+    // the socket is registered with epoll or counted in the stats, and a
+    // failure undoes the steps before it. A failed setup then costs only this
+    // connection: its socket is closed, the counters never saw it, and the
+    // loop carries on. Without this, an exception escaping here would leave
+    // the thread and terminate the process.
+    Conn* c = nullptr;
     try {
-        conn = std::make_unique<Conn>(std::move(socket), router_, config_, stats_, now);
+        auto conn = std::make_unique<Conn>(std::move(socket), router_, config_, stats_, now);
+        c = conn.get();
+        // The map slot is created empty and filled afterwards, so if creating
+        // it throws, `conn` still owns the connection and closes it.
+        conns_.emplace(fd, nullptr).first->second = std::move(conn);
+        update_deadline(c, now);  // the idle clock starts at accept; allocates a timer-list node
     } catch (const std::exception& e) {
+        // Destroying the Conn closes the socket. If the Conn was never made,
+        // the Fd still in `socket` closes it when this function returns.
+        if (c != nullptr) conns_.erase(fd);
         log_msg(LogLevel::Error, "connection dropped: %s", e.what());
-        return;  // the socket was closed by the Fd it was moved into
+        return;
     }
-    Conn* c = conn.get();
     epoll_event ev{};
     ev.events = kConnEvents;
     ev.data.ptr = c;
     // Adding a socket that already has data queued reports it at the next
     // epoll_wait, so bytes sent right after connecting are not missed.
-    if (epoll_ctl(epoll_fd_.get(), EPOLL_CTL_ADD, c->fd.get(), &ev) != 0) {
+    if (epoll_ctl(epoll_fd_.get(), EPOLL_CTL_ADD, fd, &ev) != 0) {
         if (warning_due(now)) log_msg(LogLevel::Warn, "epoll_ctl add: %s", strerror(errno));
-        return;  // conn (and its socket) is destroyed here
+        timers(c->deadline_kind).erase(c->timer_it);
+        conns_.erase(fd);  // destroys the connection and closes its socket
+        return;
     }
     stats_.connections_accepted.fetch_add(1, std::memory_order_relaxed);
     stats_.active_connections.fetch_add(1, std::memory_order_relaxed);
     ++accepted_;
-    conns_.emplace(c->fd.get(), std::move(conn));
-    update_deadline(c, now);  // the idle clock starts at accept
 }
 
 // ---- connection I/O ----
