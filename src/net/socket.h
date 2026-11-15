@@ -59,9 +59,10 @@ bool set_non_blocking(int fd);
 void set_no_delay(int fd);
 
 // Process-wide shutdown request. install() routes SIGINT and SIGTERM to it and
-// ignores SIGPIPE. Server threads include fd() in their poll/epoll set: once a
-// shutdown is requested it becomes readable and stays readable (nobody reads
-// it in normal operation), so one signal wakes every thread.
+// ignores SIGPIPE. main() waits in poll() on fd(): once a shutdown is requested
+// it becomes readable and stays readable (nobody reads it in normal
+// operation), and main() then calls Server::stop(), which wakes the server's
+// threads through eventfds of their own.
 class ShutdownSignal {
 public:
     static ShutdownSignal& instance();

@@ -2,7 +2,7 @@
 
 namespace hs {
 
-// Version string printed by the server binary.
+// The project version string. Nothing prints it at the moment.
 const char* version();
 
 }  // namespace hs
