@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>cpp-http-server</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <h1>cpp-http-server</h1>
+  <p>
+    A small HTTP/1.1 server written in C++17 on plain Linux sockets. It can run
+    with a blocking thread pool or a non-blocking epoll loop, and serves this
+    page from its <code>--root</code> directory.
+  </p>
+
+  <h2>Endpoints</h2>
+  <ul>
+    <li><a href="/health"><code>GET /health</code></a> liveness check</li>
+    <li><a href="/api/stats"><code>GET /api/stats</code></a> uptime, mode, connection and request counters</li>
+    <li><a href="/api/time"><code>GET /api/time</code></a> current server time (UTC)</li>
+    <li><a href="/api/users/42"><code>GET /api/users/:id</code></a> path parameter example</li>
+    <li><code>POST /api/echo</code> returns the request details and body as JSON</li>
+    <li><a href="/file16k.bin"><code>GET /file16k.bin</code></a> a 16 KiB static file</li>
+  </ul>
+</body>
+</html>
