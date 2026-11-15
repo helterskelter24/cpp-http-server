@@ -114,14 +114,16 @@ def test_idle_connections_open(ctx):
     proc = subprocess.Popen(loadgen_args(srv, "-c", "2", "--idle", "20", "-d", "2", "--warmup", "0"),
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
+        # 2 active connections + 20 idle + the probe's own connection (open while
+        # /api/stats is answered). A loadgen that opened fewer idle connections
+        # than asked never reaches 23. The highest value seen counts, because
+        # an active connection may be reconnecting at the moment of a probe.
         seen = 0
         deadline = time.monotonic() + S(1.5)
-        while time.monotonic() < deadline and proc.poll() is None:
-            seen = json.loads(srv.request(get("/api/stats")).body)["active_connections"]
-            if seen >= 20:
-                break
+        while time.monotonic() < deadline and proc.poll() is None and seen < 23:
+            seen = max(seen, json.loads(srv.request(get("/api/stats")).body)["active_connections"])
             time.sleep(0.05)
-        check(seen >= 20, "only %d active connections while 20 idle ones were requested" % seen)
+        check(seen >= 23, "at most %d active connections; expected 2 + 20 idle + the probe" % seen)
         out, err = proc.communicate(timeout=S(15))
     finally:
         if proc.poll() is None:
@@ -187,3 +189,18 @@ def test_warmup_requests_are_not_counted(ctx):
     counted = int(parse_csv(out)["requests"])
     served = json.loads(srv.request(get("/api/stats")).body)["requests_total"]
     check(counted > 0 and served > 1.5 * counted, "loadgen counted %d of %d served requests" % (counted, served))
+
+
+@no_server
+def test_idle_connect_failure_is_a_setup_error(ctx):
+    # Nothing listens on the port, so the idle connections cannot be opened.
+    # The run must not report numbers claiming idle=2.
+    srv = ctx.start()
+    port = srv.port
+    srv.stop()
+    for extra in ([], ["--csv"]):
+        code, out, err = run_binary([loadgen_binary(), "--port", str(port), "-c", "3", "--idle", "2",
+                                     "-d", "1", "--warmup", "0"] + extra, S(15))
+        check(code == 2, "args %r: exit code %d, stdout %r" % (extra, code, out))
+        check("idle" in err, "no explanation on stderr: %r" % err)
+        check(out.strip() == "", "numbers were printed for a failed setup: %r" % out)

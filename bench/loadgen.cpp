@@ -8,10 +8,19 @@
 //    queueing that an open-loop client with a fixed arrival rate would add, so
 //    it understates tail latency under overload (coordinated omission).
 //  * Latency of a request is the time from just before its first write() to the
-//    moment its last response byte has been read and parsed. With
+//    moment the recv() that delivers its last response byte returns (the clock is
+//    read right after recv, before the response is parsed, so parsing is not in
+//    the latency; the response is only known to be complete after parsing). With
 //    --no-keepalive the clock starts before connect(), so connect is included.
 //    Reconnecting after a "Connection: close" reply on a keep-alive run happens
 //    between requests and is not part of any request's latency.
+//  * Setup comes first: every thread opens its idle connections and connects its
+//    active ones, and only when all threads are done (a refused active connect
+//    counts as done; it is retried and counted as an error during the run) does
+//    the warm-up clock start, so the connect ramp never eats into the warm-up or
+//    the measured window. If an idle connection cannot be opened, or setup does
+//    not finish within --timeout, the run is aborted with exit status 2: it
+//    would not be the benchmark that was asked for.
 //  * Samples whose request started before the warm-up ended are discarded. The
 //    measured window is -d seconds long; requests/s is the number of successful
 //    responses completed inside it divided by -d. A request still in flight at
@@ -39,8 +48,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <condition_variable>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -236,12 +247,15 @@ constexpr auto kScanInterval = std::chrono::milliseconds(10);
 constexpr auto kConnectRetryDelay = std::chrono::milliseconds(20);
 constexpr size_t kMaxHeadBytes = 64 * 1024;
 constexpr uint64_t kMaxBodyBytes = 1ull << 30;
-// 1 M samples per thread (8 MB) is reserved up front: a vector that has to grow
-// in the middle of a run would stall this thread's connections while it copies,
-// and that stall would show up as latency. Beyond it the vector still works.
+// 1 M samples per thread (8 MB of address space, touched lazily) are reserved up
+// front: a vector that has to grow in the middle of a run stalls this thread's
+// connections while it copies, and that stall shows up as latency. The size is a
+// fixed guess rather than derived from -d because the request rate is unknown in
+// advance. A thread that records more than this still works, but the report
+// warns that the affected samples may include one copy stall.
 constexpr size_t kReserveSamples = 1u << 20;
 
-enum class State { Connecting, Sending, Reading, Backoff, Idle };
+enum class State { Connecting, Ready, Sending, Reading, Backoff, Idle };
 
 struct Conn {
     int fd = -1;
@@ -258,11 +272,44 @@ struct Conn {
     TimePoint retry_at;      // when a Backoff connection may reconnect
 };
 
+// Lets every thread finish its setup before any of them starts measuring, and
+// gives them one common start time.
+class StartGate {
+public:
+    explicit StartGate(int parties) : parties_(parties) {}
+
+    // Called by a thread whose setup succeeded. Blocks until all threads have
+    // arrived. Returns false if some thread aborted instead.
+    bool arrive() {
+        std::unique_lock<std::mutex> lock(mu_);
+        if (++arrived_ == parties_ && !aborted_) start_ = Clock::now();
+        cv_.notify_all();
+        cv_.wait(lock, [this] { return arrived_ == parties_ || aborted_; });
+        return !aborted_;
+    }
+
+    // Called by a thread whose setup failed; releases the waiting threads.
+    void abort() {
+        std::lock_guard<std::mutex> lock(mu_);
+        aborted_ = true;
+        cv_.notify_all();
+    }
+
+    TimePoint start() const { return start_; }
+
+private:
+    std::mutex mu_;
+    std::condition_variable cv_;
+    const int parties_;
+    int arrived_ = 0;
+    bool aborted_ = false;
+    TimePoint start_;
+};
+
 class Worker {
 public:
-    Worker(const Options& o, const sockaddr_in& addr, std::string request, int connections, int idle,
-           TimePoint warm_end, TimePoint end)
-        : opt_(o), addr_(addr), request_(std::move(request)), warm_end_(warm_end), end_(end),
+    Worker(const Options& o, const sockaddr_in& addr, std::string request, int connections, int idle)
+        : opt_(o), addr_(addr), request_(std::move(request)),
           timeout_(std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(o.timeout))),
           conns_(static_cast<size_t>(connections)), idle_(static_cast<size_t>(idle)) {
         result_.latencies_ns.reserve(kReserveSamples);
@@ -280,13 +327,46 @@ public:
 
     Result& result() { return result_; }
 
-    void run() {
+    // Opens the idle connections and connects the active ones, without sending
+    // anything. Throws if an idle connection cannot be opened or if this takes
+    // longer than --timeout. An active connect that fails is not fatal here: the
+    // connection is retried once the run starts, and counted as an error there.
+    void setup() {
         ep_ = ::epoll_create1(EPOLL_CLOEXEC);
         if (ep_ < 0) throw std::runtime_error(std::string("epoll_create1: ") + std::strerror(errno));
 
-        for (Conn& c : idle_) open_idle(c);
         const TimePoint begin = Clock::now();
+        for (Conn& c : idle_) open_idle(c);
         for (Conn& c : conns_) start_connect(c, begin);
+
+        std::vector<epoll_event> events(256);
+        while (connecting() > 0) {
+            if (Clock::now() - begin > timeout_) {
+                throw std::runtime_error(std::to_string(connecting()) + " connection(s) not established within " +
+                                         std::to_string(opt_.timeout) + " s (--timeout); setup aborted");
+            }
+            const int n = ::epoll_wait(ep_, events.data(), static_cast<int>(events.size()), 10);
+            if (n < 0 && errno != EINTR) throw std::runtime_error(std::string("epoll_wait: ") + std::strerror(errno));
+            for (int i = 0; i < n; ++i) {
+                on_event(*static_cast<Conn*>(events[static_cast<size_t>(i)].data.ptr), events[static_cast<size_t>(i)].events);
+            }
+        }
+        if (result_.idle_failed > 0) {
+            throw std::runtime_error(std::to_string(result_.idle_failed) +
+                                     " idle connection(s) could not be opened; the run would not hold the requested --idle");
+        }
+    }
+
+    // The measured run; call after setup() and after every thread has finished
+    // its setup. `start` is the common start time.
+    void run(TimePoint start) {
+        warm_end_ = start + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(opt_.warmup));
+        end_ = warm_end_ + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(opt_.duration));
+        setting_up_ = false;
+        const TimePoint begin = Clock::now();
+        for (Conn& c : conns_) {
+            if (c.state == State::Ready) begin_request(c);
+        }
 
         std::vector<epoll_event> events(256);
         TimePoint next_scan = begin + kScanInterval;
@@ -310,6 +390,24 @@ public:
     }
 
 private:
+    size_t connecting() const {
+        size_t n = 0;
+        for (const Conn& c : conns_) n += c.state == State::Connecting;
+        for (const Conn& c : idle_) n += c.state == State::Connecting;
+        return n;
+    }
+
+    // An active connection is established: during setup it waits for the run to
+    // start, afterwards it sends its first request at once.
+    void connected(Conn& c) {
+        if (setting_up_) {
+            c.state = State::Ready;
+            watch(c, EPOLLIN);  // a close before the run starts is noticed
+        } else {
+            begin_request(c);
+        }
+    }
+
     // ---- sockets and epoll ----
 
     int make_socket() {
@@ -375,6 +473,7 @@ private:
         if (c.state == State::Connecting) {
             if (socket_error(c.fd) != 0) {
                 close_fd(c);
+                c.state = State::Backoff;  // no longer connecting
                 ++result_.idle_failed;
                 return;
             }
@@ -434,7 +533,7 @@ private:
         if (rc < 0) {
             fail(c, kConnect, Clock::now());
         } else if (rc == 1) {
-            begin_request(c);
+            connected(c);
         } else {
             c.state = State::Connecting;
             watch(c, EPOLLOUT);
@@ -482,8 +581,11 @@ private:
             if (socket_error(c.fd) != 0) {
                 fail(c, kConnect, Clock::now());
             } else if (ev & EPOLLOUT) {
-                begin_request(c);
+                connected(c);
             }
+            return;
+        case State::Ready:  // the server closed or sent something before we asked
+            fail(c, kReset, Clock::now());
             return;
         case State::Sending:
             if ((ev & EPOLLOUT) && !try_send(c)) return;
@@ -603,8 +705,11 @@ private:
     const Options& opt_;
     const sockaddr_in addr_;
     const std::string request_;
-    const TimePoint warm_end_;
-    const TimePoint end_;
+    // Until run() starts, no request can be inside the window, so nothing that
+    // happens during setup is counted.
+    TimePoint warm_end_ = TimePoint::max();
+    TimePoint end_ = TimePoint::max();
+    bool setting_up_ = true;
     const Clock::duration timeout_;
     std::vector<Conn> conns_;  // never resized: epoll holds pointers into it
     std::vector<Conn> idle_;
@@ -666,25 +771,28 @@ int run(const Options& o) {
                                 "\r\nUser-Agent: loadgen\r\nConnection: " + (o.keepalive ? "keep-alive" : "close") +
                                 "\r\n\r\n";
 
-    // All times derive from one start point taken before the threads launch.
-    const TimePoint start = Clock::now();
-    const auto seconds = [](double s) { return std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(s)); };
-    const TimePoint warm_end = start + seconds(o.warmup);
-    const TimePoint end = warm_end + seconds(o.duration);
-
     std::vector<std::unique_ptr<Worker>> workers;
     for (int i = 0; i < threads; ++i) {
         // Spread the remainder over the first threads.
         const int conns = o.connections / threads + (i < o.connections % threads ? 1 : 0);
         const int idle = o.idle / threads + (i < o.idle % threads ? 1 : 0);
-        workers.push_back(std::make_unique<Worker>(o, addr, request, conns, idle, warm_end, end));
+        workers.push_back(std::make_unique<Worker>(o, addr, request, conns, idle));
     }
+    StartGate gate(threads);
     std::vector<std::thread> pool;
     for (auto& w : workers) {
         Worker* worker = w.get();
-        pool.emplace_back([worker] {
+        pool.emplace_back([worker, &gate] {
             try {
-                worker->run();
+                worker->setup();
+            } catch (const std::exception& e) {
+                worker->result().fatal = e.what();
+                gate.abort();  // do not leave the other threads waiting
+                return;
+            }
+            if (!gate.arrive()) return;  // another thread's setup failed
+            try {
+                worker->run(gate.start());
             } catch (const std::exception& e) {
                 worker->result().fatal = e.what();
             }
@@ -694,7 +802,8 @@ int run(const Options& o) {
 
     // Merge and sort once, after the run, so no sorting happens while measuring.
     std::vector<uint64_t> all;
-    uint64_t errors = 0, idle_closed = 0, idle_failed = 0;
+    uint64_t errors = 0, idle_closed = 0;
+    bool grew = false;
     uint64_t by_kind[kErrorKinds] = {};
     for (auto& w : workers) {
         Result& r = w->result();
@@ -702,10 +811,10 @@ int run(const Options& o) {
             std::fprintf(stderr, "loadgen: %s\n", r.fatal.c_str());
             return 2;
         }
+        grew = grew || r.latencies_ns.size() > kReserveSamples;
         all.insert(all.end(), r.latencies_ns.begin(), r.latencies_ns.end());
         errors += r.errors;
         idle_closed += r.idle_closed;
-        idle_failed += r.idle_failed;
         for (int k = 0; k < kErrorKinds; ++k) by_kind[k] += r.errors_by_kind[k];
     }
     std::sort(all.begin(), all.end());
@@ -746,7 +855,10 @@ int run(const Options& o) {
         std::printf("p99:         %.3f ms\n", p99);
         std::printf("max:         %.3f ms\n", max);
         std::printf("idle_closed=%llu\n", static_cast<unsigned long long>(idle_closed));
-        if (idle_failed > 0) std::printf("idle_failed=%llu\n", static_cast<unsigned long long>(idle_failed));
+    }
+    if (grew) {
+        std::fprintf(stderr, "loadgen: warning: a thread recorded more than %zu samples; its sample buffer grew "
+                             "during the run and a few latencies may include the copy\n", kReserveSamples);
     }
     return requests == 0 ? 1 : 0;
 }
