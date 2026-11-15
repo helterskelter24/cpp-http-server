@@ -45,7 +45,7 @@ enable_testing()
 
 file(GLOB HS_UNIT_TESTS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/tests/unit/*_test.cpp)
 add_executable(unit_tests tests/unit/main.cpp ${HS_UNIT_TESTS})
-target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests/unit)
+target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests/unit ${CMAKE_SOURCE_DIR}/bench)
 target_link_libraries(unit_tests PRIVATE hs_core)
 add_test(NAME unit COMMAND unit_tests)
 
@@ -58,3 +58,16 @@ add_test(NAME integration_epoll
          COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/integration/run_all.py
                  --binary $<TARGET_FILE:httpserver> --mode epoll)
 set_tests_properties(integration_epoll PROPERTIES TIMEOUT 300)
+
+# The load generator is an independent client: it deliberately does not link
+# hs_core, so no server code can influence what it measures.
+add_executable(loadgen bench/loadgen.cpp)
+target_link_libraries(loadgen PRIVATE hs_flags Threads::Threads)
+
+# Needs the loadgen binary, so it selects only the loadgen tests; the two
+# suites above are run without --loadgen and skip them.
+add_test(NAME loadgen_smoke
+         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/integration/run_all.py
+                 --binary $<TARGET_FILE:httpserver> --mode epoll
+                 --loadgen $<TARGET_FILE:loadgen> -k loadgen)
+set_tests_properties(loadgen_smoke PROPERTIES TIMEOUT 120)

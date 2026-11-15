@@ -40,6 +40,10 @@ SANITIZER_MARKERS = (
 LISTEN_RE = re.compile(r"listening on (\S+):(\d+) mode=(\w+) threads=(\d+)")
 
 
+# Path of the loadgen binary; run_all.py sets it from --loadgen.
+LOADGEN = None
+
+
 class TestFailure(AssertionError):
     pass
 
@@ -166,6 +170,14 @@ def readable_within(sock, timeout):
         return True
     r, _, _ = select.select([sock], [], [], timeout)
     return bool(r)
+
+
+def loadgen_binary():
+    """The loadgen binary for tests that drive it; skips the test when run_all.py
+    was not given --loadgen."""
+    if LOADGEN is None:
+        raise Skip("loadgen binary not given (pass --loadgen PATH)")
+    return LOADGEN
 
 
 # ---- host resources ----

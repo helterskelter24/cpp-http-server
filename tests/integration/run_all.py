@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Runs the integration tests against one server binary in one mode.
 
-    run_all.py --binary build/httpserver --mode pool [-k SUBSTRING]
+    run_all.py --binary build/httpserver --mode pool [-k SUBSTRING] [--loadgen build/loadgen]
 
 Every `test_*` function in the `test_*.py` modules next to this file is a test.
 Each gets a fresh server (with the flags from @flags) unless it is marked
@@ -88,9 +88,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", required=True)
     parser.add_argument("--mode", required=True, choices=["pool", "epoll"])
+    parser.add_argument("--loadgen", default=None,
+                        help="loadgen binary; the tests that need it are skipped without it")
     parser.add_argument("-k", dest="selector", default=None, help="run tests whose name contains this")
     args = parser.parse_args()
     binary = os.path.abspath(args.binary)
+    if args.loadgen:
+        harness.LOADGEN = os.path.abspath(args.loadgen)
 
     signal.signal(signal.SIGALRM, _on_alarm)
     passed = failed = skipped = 0
