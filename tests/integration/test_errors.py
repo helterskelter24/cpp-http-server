@@ -2,7 +2,7 @@
 
 import time
 
-from harness import S, check, flags, get, read_response, req, wait_eof
+from harness import S, check, flags, get, read_response, req, tcp_wmem_max, wait_eof
 
 
 def expect_error_and_close(srv, raw, status):
@@ -74,5 +74,22 @@ def test_client_disconnect_mid_request(srv):
     time.sleep(0.05)
     s.close()
     time.sleep(0.05)
+    r = srv.request(get("/health"))
+    check(r.status == 200, r)
+
+
+
+def test_client_gone_while_server_writes(srv):
+    # The client pipelines requests for several megabytes of responses and
+    # closes at once without reading. The server is still writing when the
+    # client's kernel answers with a reset, so a later send() fails with EPIPE.
+    # That must cost only this connection: without MSG_NOSIGNAL (and SIGPIPE
+    # ignored) the default SIGPIPE action would kill the whole process.
+    count = max(400, (tcp_wmem_max() + 2 * 1024 * 1024) // 16384)
+    for _ in range(5):
+        s = srv.connect()
+        s.sendall(get("/file16k.bin") * count)
+        s.close()
+    time.sleep(S(0.3))
     r = srv.request(get("/health"))
     check(r.status == 200, r)
