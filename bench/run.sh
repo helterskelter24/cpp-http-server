@@ -75,8 +75,10 @@ cmake --build "$BUILD" -j "$(nproc)" >/dev/null
 
 mkdir -p "$OUT"
 TMP="$(mktemp -d)"
-# Everything is written here first and moved into $OUT at the end.
-STAGE="$TMP/results"
+# Results are written here first and moved into $OUT at the end. The staging
+# directory sits inside $OUT so each final move is a rename on one filesystem.
+STAGE="$OUT/.staging.$$"
+rm -rf "$STAGE"
 mkdir "$STAGE"
 CSV="$STAGE/raw.csv"
 
@@ -104,7 +106,7 @@ cleanup() {
     if [ -n "$LOADGEN_PID" ]; then
         kill -KILL -- "-$LOADGEN_PID" 2>/dev/null || true
     fi
-    rm -rf "$TMP"
+    rm -rf "$TMP" "$STAGE"
 }
 trap cleanup EXIT
 # Without these traps bash would not stop on Ctrl-C: it waits for the
@@ -327,8 +329,9 @@ for mode in "${MODES[@]}"; do
 done
 
 python3 "$ROOT/bench/report.py" "$STAGE"
-# The sweep is complete: replace the previous results. A chart that was not
-# drawn this time (no matplotlib) is removed rather than left stale.
+# The sweep is complete: replace the previous results, each file with one
+# rename. A chart that was not drawn this time (no matplotlib) is removed
+# rather than left stale.
 for f in raw.csv environment.txt results.md throughput.png p99.png; do
     if [ -e "$STAGE/$f" ]; then
         mv -f "$STAGE/$f" "$OUT/$f"
