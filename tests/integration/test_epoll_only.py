@@ -8,7 +8,7 @@ import signal
 import socket
 import time
 
-from harness import (WWW, S, check, epoll_only, get, need_fds, no_server, read_response,
+from harness import (WWW, S, check, epoll_only, get, limit_fds, need_fds, no_server, read_response,
                      readable_within, rss_bytes, tcp_wmem_max)
 
 with open(os.path.join(WWW, "file16k.bin"), "rb") as _f:
@@ -49,6 +49,52 @@ def test_many_idle_connections(ctx):
     finally:
         for s in idle:
             s.close()
+
+
+@epoll_only
+@no_server
+def test_queued_connection_accepted_after_descriptors_free_up(ctx):
+    # The listening socket is edge-triggered. A client that connects while
+    # accept() fails with EMFILE raises its edge then, and that edge is used up
+    # by the failing accept. When descriptors are freed later, nothing new
+    # arrives on the listening socket, so only the accept retry timer can pick
+    # the client up. (test_resources::test_fd_exhaustion_recovers checks
+    # recovery with a new connection, whose own edge would hide a missing
+    # retry.)
+    need_fds(512)
+    srv = ctx.start("--threads", "1", preexec=limit_fds(64))
+    extra = []
+    waiter = None
+    try:
+        for _ in range(100):
+            try:
+                extra.append(srv.connect(timeout=S(1)))
+            except OSError:
+                pass
+        time.sleep(S(0.2))  # let the server hit EMFILE
+        check("Too many open files" in srv.stderr(), "the server never ran out of descriptors")
+
+        waiter = srv.connect()
+        waiter.sendall(get("/health"))
+        # Long enough for the waiter's edge to be consumed by a failing accept.
+        time.sleep(S(0.3))
+        check(not readable_within(waiter, 0), "the waiting client was answered while out of descriptors")
+
+        # Free descriptors without opening any new connection: the server
+        # sees EOF on the connections it accepted and closes them.
+        start = time.monotonic()
+        for s in extra:
+            s.close()
+        extra = []
+        r = read_response(waiter, timeout=S(1))
+        elapsed = time.monotonic() - start
+        check(r.status == 200, r)
+        check(elapsed <= S(1), "queued client answered after %.2fs" % elapsed)
+    finally:
+        for s in extra:
+            s.close()
+        if waiter is not None:
+            waiter.close()
 
 
 def _read_responses_slowly(sock, count, piece):
