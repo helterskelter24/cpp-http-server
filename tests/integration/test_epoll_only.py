@@ -53,6 +53,45 @@ def test_many_idle_connections(ctx):
 
 @epoll_only
 @no_server
+def test_idle_connections_release_large_output_buffers(ctx):
+    # Each client in turn pipelines requests for about 1.6 MB of responses,
+    # reads them all and then stays connected without sending anything. The
+    # server's output buffer grows to its 1 MiB high-water mark for each of
+    # them; an idle connection must give that back, or 64 of them would hold
+    # 64 MiB or more. Clients go one at a time so the freed memory can be
+    # reused by the next one and RSS stays flat. ASan holds freed memory in a
+    # quarantine (to catch use-after-free), which would defeat that reuse, so
+    # it is turned off for this server; other builds ignore ASAN_OPTIONS.
+    env = dict(os.environ)
+    env["ASAN_OPTIONS"] = (env.get("ASAN_OPTIONS", "") + ":quarantine_size_mb=0").lstrip(":")
+    srv = ctx.start("--threads", "1", env=env)
+    count = 100
+    clients = []
+    try:
+        # One client first, so allocations the server makes only once (and
+        # the first buffer) are already in the baseline.
+        rss_before = None
+        for i in range(65):
+            s = srv.connect()
+            clients.append(s)
+            s.sendall(get("/file16k.bin") * count)
+            for _ in range(count):
+                r = read_response(s)
+                check(r.status == 200 and len(r.body) == len(FILE16K), r)
+            if i == 0:
+                rss_before = rss_bytes(srv.proc.pid)
+        rss_after = rss_bytes(srv.proc.pid)
+        growth = rss_after - rss_before
+        print("    64 idle connections after large responses: RSS %.1f -> %.1f MiB"
+              % (rss_before / 2**20, rss_after / 2**20))
+        check(growth < 24 * 2**20, "RSS grew by %.1f MiB for 64 idle connections" % (growth / 2**20))
+    finally:
+        for s in clients:
+            s.close()
+
+
+@epoll_only
+@no_server
 def test_queued_connection_accepted_after_descriptors_free_up(ctx):
     # The listening socket is edge-triggered. A client that connects while
     # accept() fails with EMFILE raises its edge then, and that edge is used up

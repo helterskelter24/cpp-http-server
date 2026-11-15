@@ -257,7 +257,7 @@ class ServerProc:
     Never pass a --log-level above info: the `listening on` line is an Info log
     line and the harness waits for it."""
 
-    def __init__(self, binary, mode, extra=(), preexec=None):
+    def __init__(self, binary, mode, extra=(), preexec=None, env=None):
         self.binary = binary
         self.mode = mode
         self.args = _base_args(binary, mode) + list(extra)
@@ -272,6 +272,7 @@ class ServerProc:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
             preexec_fn=preexec,
+            env=env,
         )
         # From here on any exception, including the runner's hard time limit
         # firing during the wait below, must kill the child: the caller never
@@ -366,8 +367,8 @@ class Context:
         self.mode = mode
         self.servers = []
 
-    def start(self, *extra, preexec=None):
-        srv = ServerProc(self.binary, self.mode, extra, preexec)
+    def start(self, *extra, preexec=None, env=None):
+        srv = ServerProc(self.binary, self.mode, extra, preexec, env)
         self.servers.append(srv)
         return srv
 
