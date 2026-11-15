@@ -62,7 +62,7 @@ def test_slow_headers_still_timeout(srv):
         r = read_response(s)
         check(r.status == 408, r)
         # A deadline refreshed on every byte would never fire at all.
-        check(elapsed <= S(1.5), "408 after %.2fs, expected by %.1f" % (elapsed, S(1.5)))
+        check(0.4 <= elapsed <= S(1.5), "408 after %.2fs, expected 0.4..%.1f" % (elapsed, S(1.5)))
 
 
 @flags("--keepalive-timeout", "0.5")
@@ -81,7 +81,7 @@ def test_crlf_trickle_still_times_out(srv):
         elapsed, _ = _trickle(s, [b"\r\n"], S(0.1), S(3))
         _, data = wait_eof(s, S(1))
         check(data == b"", "expected a silent close (no 408), got %r" % data)
-        check(elapsed <= S(1.5), "closed after %.2fs, expected by %.1f" % (elapsed, S(1.5)))
+        check(0.4 <= elapsed <= S(1.5), "closed after %.2fs, expected 0.4..%.1f" % (elapsed, S(1.5)))
 
 
 @flags("--threads", "1", "--keepalive-timeout", "0.5")
@@ -96,16 +96,33 @@ def test_prompt_request_not_dropped_by_idle_timeout(srv):
         wait_eof(holder, S(2))
 
 
+def _tcp_wmem_max():
+    """The most a socket's send buffer can grow to by autotuning."""
+    try:
+        with open("/proc/sys/net/ipv4/tcp_wmem") as f:
+            return int(f.read().split()[2])
+    except (OSError, ValueError, IndexError):
+        return 4 * 1024 * 1024
+
+
 @flags("--write-timeout", "0.5")
 def test_write_timeout_closes_stalled_reader(srv):
-    # 400 pipelined 16 KiB responses (6.4 MB) are far more than the socket
-    # buffers hold, so the server's send stalls while this client reads nothing.
-    count = 400
-    with srv.connect() as s:
+    # The server can push into the network at most its send buffer (which the
+    # kernel autotunes up to tcp_wmem's maximum) plus this client's receive
+    # buffer. The receive buffer is shrunk before connecting, so the window
+    # offered in the handshake is already small, and the request count is
+    # derived from tcp_wmem so the responses overflow both on any host.
+    count = max(400, (_tcp_wmem_max() + 2 * 1024 * 1024) // 16384)
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        s.settimeout(S(5))
+        s.connect(("127.0.0.1", srv.port))
         s.sendall(get("/file16k.bin") * count)
         time.sleep(S(1.5))  # well past the write timeout
         # Draining the socket buffers takes moments. A server still writing
-        # would send all 6.4 MB and then keep the connection open.
+        # would send every response and then keep the connection open.
         _, data = wait_eof(s, S(3))
         check(len(data) < count * 16384, "all %d bytes arrived; the server never gave up" % len(data))
+    finally:
+        s.close()

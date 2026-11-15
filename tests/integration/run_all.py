@@ -8,7 +8,8 @@ Each gets a fresh server (with the flags from @flags) unless it is marked
 @shared or @no_server. After each server exits the harness fails the test if
 the exit code after a requested shutdown was not 0 or if stderr holds a
 sanitizer report. Every test has a hard time limit so a hung server fails the
-test instead of hanging the run.
+test instead of hanging the run. A test that cannot run on this host (for
+example, too low a file descriptor limit) raises harness.Skip with the reason.
 """
 
 import argparse
@@ -120,6 +121,7 @@ def main():
 
         start = time.monotonic()
         problems = []
+        skip_reason = None
         srv = None
         ctx = None
         signal.setitimer(signal.ITIMER_REAL, harness.S(getattr(fn, "time_limit", DEFAULT_TIME_LIMIT)))
@@ -136,6 +138,8 @@ def main():
             else:
                 srv = harness.ServerProc(binary, args.mode, getattr(fn, "server_flags", []))
                 fn(srv)
+        except harness.Skip as e:
+            skip_reason = str(e)
         except Exception:
             problems.append(traceback.format_exc().rstrip())
         finally:
@@ -152,7 +156,10 @@ def main():
                         problems.append("sanitizer report in server stderr: " + report.strip())
 
         elapsed = time.monotonic() - start
-        if problems:
+        if skip_reason is not None and not problems:
+            skipped += 1
+            print("SKIP %s (%s)" % (full, skip_reason))
+        elif problems:
             failed += 1
             print("FAIL %s (%.2fs)" % (full, elapsed))
             for p in problems:

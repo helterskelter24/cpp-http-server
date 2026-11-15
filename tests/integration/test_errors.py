@@ -64,7 +64,11 @@ def test_traversal_blocked(srv):
         check(b"cmake_minimum_required" not in r.body, r.body)
 
 
+@flags("--threads", "1")
 def test_client_disconnect_mid_request(srv):
+    # One thread, so the follow-up request is served only if the server let go
+    # of the abandoned connection (with two, a pool worker could stay stuck on
+    # it and the other worker would still answer).
     s = srv.connect()
     s.sendall(b"POST /api/echo HTTP/1.1\r\nHost: x\r\nContent-Len")
     time.sleep(0.05)

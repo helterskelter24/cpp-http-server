@@ -95,13 +95,28 @@ void PoolServer::accept_loop() {
     while (!stopping_.load()) {
         int ready = poll(fds, 2, -1);
         if (ready < 0) {
-            if (errno == EINTR) continue;
-            log_msg(LogLevel::Error, "poll on listening socket: %s", strerror(errno));
+            int err = errno;
+            if (err == EINTR) continue;
+            // Should never happen with two valid descriptors; if it does, it
+            // will most likely keep happening, so log rarely and back off
+            // rather than flood the log from a tight loop.
+            if (warning_due())
+                log_msg(LogLevel::Error, "poll on listening socket: %s", strerror(err));
             std::this_thread::sleep_for(kAcceptBackoff);
             continue;
         }
         if (fds[1].revents != 0) break;  // stop() was called
-        if (fds[0].revents & POLLIN) accept_ready();
+        if (fds[0].revents & POLLIN) {
+            accept_ready();
+        } else if (fds[0].revents != 0) {
+            // POLLERR, POLLHUP or POLLNVAL without POLLIN: accept() would not
+            // clear the condition, so poll() would report it again at once and
+            // the acceptor would spin. Back off the same way as for accept errors.
+            if (warning_due())
+                log_msg(LogLevel::Error, "listening socket reported revents=0x%x (backing off)",
+                        static_cast<unsigned>(fds[0].revents));
+            std::this_thread::sleep_for(kAcceptBackoff);
+        }
     }
     // Closing the listening socket makes the kernel refuse new connections and
     // reset any still waiting in the backlog.
@@ -117,21 +132,24 @@ void PoolServer::accept_ready() {
             hand_off(Fd(fd));
             continue;
         }
-        if (errno == EINTR || errno == ECONNABORTED) continue;  // try the next one
-        if (errno == EAGAIN || errno == EWOULDBLOCK) return;    // backlog empty
+        int err = errno;
+        if (err == EINTR || err == ECONNABORTED) continue;  // try the next one
+        if (err == EAGAIN || err == EWOULDBLOCK) return;    // backlog empty
         // EMFILE/ENFILE (out of descriptors), ENOBUFS/ENOMEM, or anything else:
         // back off rather than retry at once, which would just fail again.
-        warn_accept_failure(errno);
+        if (warning_due()) log_msg(LogLevel::Warn, "accept: %s (backing off)", strerror(err));
         std::this_thread::sleep_for(kAcceptBackoff);
         return;
     }
 }
 
-void PoolServer::warn_accept_failure(int err) {
+// Acceptor-thread warnings repeat for as long as their cause lasts (EMFILE
+// until some connection closes), so at most one per second is logged.
+bool PoolServer::warning_due() {
     Clock::time_point now = Clock::now();
-    if (now - last_accept_warning_ < std::chrono::seconds(1)) return;
-    last_accept_warning_ = now;
-    log_msg(LogLevel::Warn, "accept: %s (backing off)", strerror(err));
+    if (now - last_acceptor_warning_ < std::chrono::seconds(1)) return false;
+    last_acceptor_warning_ = now;
+    return true;
 }
 
 void PoolServer::hand_off(Fd conn) {

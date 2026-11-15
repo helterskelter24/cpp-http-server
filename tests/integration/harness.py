@@ -43,6 +43,10 @@ class TestFailure(AssertionError):
     pass
 
 
+class Skip(Exception):
+    """Raised by a test that cannot run on this host; the message says why."""
+
+
 def check(cond, message):
     if not cond:
         raise TestFailure(message)
@@ -206,11 +210,18 @@ class ServerProc:
             stderr=subprocess.PIPE,
             preexec_fn=preexec,
         )
-        # stderr is drained continuously so the server never blocks on a full
-        # pipe, and so sanitizer reports can be checked after it exits.
-        self._reader = threading.Thread(target=self._read_stderr, daemon=True)
-        self._reader.start()
-        self._listening.wait(S(5))
+        # From here on any exception, including the runner's hard time limit
+        # firing during the wait below, must kill the child: the caller never
+        # receives this object, so nobody else could clean it up.
+        try:
+            # stderr is drained continuously so the server never blocks on a full
+            # pipe, and so sanitizer reports can be checked after it exits.
+            self._reader = threading.Thread(target=self._read_stderr, daemon=True)
+            self._reader.start()
+            self._listening.wait(S(5))
+        except BaseException:
+            self.kill()
+            raise
         if self.port is None:
             self.kill()
             raise TestFailure("no 'listening on' line (exit code %r; None means still running after %.1fs); "
@@ -272,7 +283,9 @@ class ServerProc:
             self.proc.kill()
             self.proc.wait()
         self.exit_code = self.proc.returncode
-        self._reader.join(S(5))
+        reader = getattr(self, "_reader", None)
+        if reader is not None and reader.is_alive():
+            reader.join(S(5))
 
     def sanitizer_report(self):
         """The first stderr line that looks like a sanitizer finding, or None."""

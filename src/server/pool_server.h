@@ -38,7 +38,7 @@ private:
     void accept_ready();  // accept until the backlog is empty
     void hand_off(Fd conn);
     void reject_busy(int fd);
-    void warn_accept_failure(int err);
+    bool warning_due();  // rate limit for acceptor warnings: true at most once per second
 
     // Runs on a worker: serves one connection, then closes it.
     void run_connection(int fd, Clock::time_point accepted);
@@ -55,7 +55,7 @@ private:
     uint16_t port_ = 0;
     std::unique_ptr<ThreadPool> pool_;
     std::thread acceptor_;
-    Clock::time_point last_accept_warning_{};  // acceptor thread only
+    Clock::time_point last_acceptor_warning_{};  // acceptor thread only
 
     // grace_deadline_ is written once, before stopping_ becomes true, and read
     // only after a thread has seen stopping_ == true. The atomic store/load pair
