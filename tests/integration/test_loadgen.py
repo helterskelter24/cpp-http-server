@@ -8,7 +8,8 @@ import json
 import subprocess
 import time
 
-from harness import S, check, get, loadgen_binary, no_server, read_response, run_binary
+from harness import (S, check, check_no_sanitizer_report, get, loadgen_binary, no_server, read_response,
+                     run_binary)
 
 CSV_FIELDS = ["label", "connections", "idle", "keepalive", "requests", "errors",
               "duration_s", "rps", "p50_ms", "p95_ms", "p99_ms", "max_ms"]
@@ -131,6 +132,7 @@ def test_idle_connections_open(ctx):
         if proc.poll() is None:
             proc.kill()
             proc.communicate()
+    check_no_sanitizer_report("loadgen", err.decode(errors="replace"))
     check(proc.returncode == 0, "exit code %d, stderr %r" % (proc.returncode, err))
     text = out.decode()
     check("idle_closed=0" in text, text)
@@ -240,6 +242,7 @@ def test_first_request_of_preconnected_no_keepalive_connection_is_timed_from_run
         if proc.poll() is None:
             proc.kill()
             proc.communicate()
+    check_no_sanitizer_report("loadgen", err.decode(errors="replace"))
     check(proc.returncode == 0, "exit code %d, stderr %r" % (proc.returncode, err))
     row = parse_csv(out.decode())
     check(row["errors"] == "0", row)

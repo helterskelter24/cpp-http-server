@@ -37,6 +37,22 @@ SANITIZER_MARKERS = (
     "WARNING: ThreadSanitizer",
 )
 
+def sanitizer_line(text):
+    """The first line of `text` that looks like a sanitizer finding, or None."""
+    for line in text.splitlines():
+        if any(marker in line for marker in SANITIZER_MARKERS):
+            return line
+    return None
+
+
+def check_no_sanitizer_report(what, stderr):
+    """Fails the test if a child process (server or loadgen) reported a
+    sanitizer finding on stderr; its exit code alone could hide one, because
+    a test may expect a non-zero exit."""
+    line = sanitizer_line(stderr)
+    check(line is None, "sanitizer report in %s stderr: %s" % (what, line and line.strip()))
+
+
 LISTEN_RE = re.compile(r"listening on (\S+):(\d+) mode=(\w+) threads=(\d+)")
 
 
@@ -239,7 +255,8 @@ def _base_args(binary, mode, port=0, root=WWW):
 
 def run_binary(args, timeout):
     """Runs the binary to completion. Returns (exit code, stdout, stderr).
-    Kills it and fails if it is still running after `timeout` seconds."""
+    Kills it and fails if it is still running after `timeout` seconds, or if
+    it printed a sanitizer report."""
     proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         out, err = proc.communicate(timeout=timeout)
@@ -247,7 +264,9 @@ def run_binary(args, timeout):
         proc.kill()
         proc.communicate()
         raise TestFailure("%s did not exit within %.1fs" % (" ".join(args), timeout))
-    return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
+    err = err.decode(errors="replace")
+    check_no_sanitizer_report(os.path.basename(args[0]), err)
+    return proc.returncode, out.decode(errors="replace"), err
 
 
 class ServerProc:
@@ -353,10 +372,7 @@ class ServerProc:
 
     def sanitizer_report(self):
         """The first stderr line that looks like a sanitizer finding, or None."""
-        for line in self.stderr().splitlines():
-            if any(marker in line for marker in SANITIZER_MARKERS):
-                return line
-        return None
+        return sanitizer_line(self.stderr())
 
 
 class Context:
