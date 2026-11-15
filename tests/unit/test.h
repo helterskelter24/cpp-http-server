@@ -7,6 +7,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace hs_test {
@@ -38,12 +39,52 @@ inline void report_failure(const char* file, int line, const std::string& what) 
     std::cerr << file << ":" << line << ": FAILED: " << what << "\n";
 }
 
+// Printing for failure messages. print_value(out, v, 0) prefers the first
+// overload (taken only if `out << v` compiles); otherwise the `long` overload
+// is used, since 0 converts to long less well than to int. Enums print as their
+// underlying number and anything else as a placeholder, so CHECK_EQ works for
+// every type that has operator==.
+template <typename T>
+auto print_value(std::ostream& out, const T& value, int) -> decltype(out << value, void()) {
+    out << value;
+}
+
+template <typename T>
+void print_value(std::ostream& out, const T& value, long) {
+    if constexpr (std::is_enum_v<T>) {
+        out << static_cast<std::underlying_type_t<T>>(value);
+    } else {
+        (void)value;
+        out << "<unprintable>";
+    }
+}
+
+// Equality used by CHECK_EQ. Comparing a signed with an unsigned integer using
+// == would convert the signed one silently (and trip -Wsign-compare), so that
+// mixed case is handled explicitly: a negative number never equals an unsigned one.
+template <typename A, typename B>
+bool values_equal(const A& a, const B& b) {
+    if constexpr (std::is_integral_v<A> && std::is_integral_v<B> &&
+                  std::is_signed_v<A> != std::is_signed_v<B>) {
+        if constexpr (std::is_signed_v<A>) {
+            return a >= 0 && static_cast<unsigned long long>(a) == static_cast<unsigned long long>(b);
+        } else {
+            return b >= 0 && static_cast<unsigned long long>(a) == static_cast<unsigned long long>(b);
+        }
+    } else {
+        return a == b;
+    }
+}
+
 template <typename A, typename B>
 void check_eq(const char* file, int line, const char* a_text, const char* b_text, const A& a,
               const B& b) {
-    if (a == b) return;
+    if (values_equal(a, b)) return;
     std::ostringstream out;
-    out << a_text << " == " << b_text << "\n    left:  " << a << "\n    right: " << b;
+    out << a_text << " == " << b_text << "\n    left:  ";
+    print_value(out, a, 0);
+    out << "\n    right: ";
+    print_value(out, b, 0);
     report_failure(file, line, out.str());
 }
 
