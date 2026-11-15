@@ -1,0 +1,19 @@
+date:            2026-11-15 16:09:05 UTC
+git commit:      12770e5 (uncommitted: bench/report.py bench/run.sh)
+cpu:             Intel(R) Xeon(R) Processor @ 2.10GHz
+cores (nproc):   2
+memory:          7.8 GiB
+kernel:          Linux 6.18.44-fc-v470
+compiler:        c++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+cmake:           cmake version 3.28.3
+build type:      Release
+server flags:    -O2 -g -std=c++17 -Wall -Wextra -Wpedantic -Werror
+ulimit -n:       8192
+tcp_rmem:        4096 131072 33554432
+tcp_wmem:        4096 16384 4194304
+somaxconn:       4096
+ip_local_port_range: 32768 60999
+tcp_tw_reuse:    2
+network:         loopback (127.0.0.1); client and server on the same machine, sharing its cores
+server:          --threads 2, access log off; pool mode adds --queue-capacity 4096 --keepalive-timeout 5
+loadgen:         -t 1, --warmup 1, -d 10, closed loop, --timeout 5 (default)
