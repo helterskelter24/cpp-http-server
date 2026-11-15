@@ -53,15 +53,36 @@ void log_msg(LogLevel level, const char* fmt, ...) {
     if (n < 0) return;
     size_t len = static_cast<size_t>(n);
 
-    // Reserve one byte for the trailing newline so a truncated line still ends in one.
+    // Format the message on its own first, so the control-byte escaping below
+    // applies to the message only and never to the prefix.
+    char msg[kMaxLine];
     va_list args;
     va_start(args, fmt);
-    int m = vsnprintf(buf + len, sizeof buf - len - 1, fmt, args);
+    int m = vsnprintf(msg, sizeof msg, fmt, args);
     va_end(args);
     if (m < 0) m = 0;
     // vsnprintf returns the length it wanted, not what fit.
-    size_t room = sizeof buf - len - 1;
-    len += static_cast<size_t>(m) < room ? static_cast<size_t>(m) : room - 1;
+    size_t msg_len = static_cast<size_t>(m) < sizeof msg ? static_cast<size_t>(m) : sizeof msg - 1;
+
+    // Control bytes become \xNN so an attacker-controlled string (such as a
+    // percent-decoded request path containing %0A) cannot start a fake log line.
+    // An escape is written only if all four bytes fit, so truncation never splits
+    // one and the buffer cannot overflow. One byte stays reserved for the newline.
+    static const char kHex[] = "0123456789abcdef";
+    for (size_t i = 0; i < msg_len; ++i) {
+        unsigned char ch = static_cast<unsigned char>(msg[i]);
+        bool control = ch < 0x20 || ch == 0x7f;
+        size_t need = control ? 4 : 1;
+        if (len + need > sizeof buf - 1) break;
+        if (control) {
+            buf[len++] = '\\';
+            buf[len++] = 'x';
+            buf[len++] = kHex[ch >> 4];
+            buf[len++] = kHex[ch & 0xf];
+        } else {
+            buf[len++] = static_cast<char>(ch);
+        }
+    }
     buf[len++] = '\n';
 
     // One write keeps the line contiguous even when other threads log at once.

@@ -1,7 +1,6 @@
 #include <unistd.h>
 
 #include <cstdio>
-#include <regex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -44,6 +43,22 @@ private:
     int saved_ = -1;
 };
 
+// True if `line` (without its newline) starts with "YYYY-MM-DD HH:MM:SS.mmm [LEVEL] "
+// and returns the rest in `rest`. Hand-written instead of std::regex, which trips a
+// GCC -Wmaybe-uninitialized false positive in the sanitizer builds.
+bool split_line(const std::string& line, const std::string& level, std::string& rest) {
+    static const char kShape[] = "dddd-dd-dd dd:dd:dd.ddd ";  // d = any digit
+    const size_t n = sizeof kShape - 1;
+    if (line.size() < n) return false;
+    for (size_t i = 0; i < n; ++i) {
+        if (kShape[i] == 'd' ? !(line[i] >= '0' && line[i] <= '9') : line[i] != kShape[i]) return false;
+    }
+    std::string tag = "[" + level + "] ";
+    if (line.compare(n, tag.size(), tag) != 0) return false;
+    rest = line.substr(n + tag.size());
+    return true;
+}
+
 }  // namespace
 
 TEST(logger_line_format) {
@@ -51,8 +66,10 @@ TEST(logger_line_format) {
     StderrCapture cap;
     hs::log_msg(hs::LogLevel::Info, "hello %d %s", 42, "world");
     std::string out = cap.take();
-    std::regex re(R"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[INFO\] hello 42 world\n)");
-    CHECK(std::regex_match(out, re));
+    CHECK(!out.empty() && out.back() == '\n');
+    std::string rest;
+    CHECK(split_line(out.substr(0, out.size() - 1), "INFO", rest));
+    CHECK_EQ(rest, std::string("hello 42 world"));
     hs::log_set_level(hs::LogLevel::Info);
 }
 
@@ -111,15 +128,41 @@ TEST(logger_threads_do_not_interleave) {
     }
     for (auto& th : threads) th.join();
     std::string out = cap.take();
-    std::regex re(R"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[INFO\] thread=\d seq=\d+ end)");
     int lines = 0;
     size_t pos = 0;
     while (pos < out.size()) {
         size_t nl = out.find('\n', pos);
         if (nl == std::string::npos) break;
-        CHECK(std::regex_match(out.substr(pos, nl - pos), re));
+        std::string rest;
+        CHECK(split_line(out.substr(pos, nl - pos), "INFO", rest));
+        CHECK(rest.rfind("thread=", 0) == 0 && rest.size() > 4 && rest.compare(rest.size() - 4, 4, " end") == 0);
         ++lines;
         pos = nl + 1;
     }
     CHECK_EQ(lines, kThreads * kPerThread);
+}
+
+TEST(logger_escapes_control_bytes) {
+    hs::log_set_level(hs::LogLevel::Info);
+    StderrCapture cap;
+    // A decoded request path could carry these; they must not forge a second line.
+    hs::log_msg(hs::LogLevel::Info, "path=%s", "/a\nFAKE [ERROR] x\r\x1b[31m\x7f" "end");
+    std::string out = cap.take();
+    CHECK(out.find('\n') == out.size() - 1);
+    CHECK(out.find('\r') == std::string::npos);
+    CHECK(out.find('\x1b') == std::string::npos);
+    CHECK(out.find("path=/a\\x0aFAKE [ERROR] x\\x0d\\x1b[31m\\x7fend\n") != std::string::npos);
+}
+
+TEST(logger_escaping_respects_truncation) {
+    hs::log_set_level(hs::LogLevel::Info);
+    StderrCapture cap;
+    std::string nasty(5000, '\n');  // every byte expands to four
+    hs::log_msg(hs::LogLevel::Info, "%s", nasty.c_str());
+    std::string out = cap.take();
+    CHECK(out.size() <= 2048);
+    CHECK(out.back() == '\n');
+    CHECK(out.find('\n') == out.size() - 1);
+    // Cut on an escape boundary: the text before the newline ends with a whole \x0a.
+    CHECK(out.substr(out.size() - 5) == "\\x0a\n");
 }

@@ -1,6 +1,7 @@
 #include "config.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <thread>
 
 namespace hs {
@@ -43,8 +44,15 @@ bool parse_seconds(const std::string& s, std::chrono::milliseconds& out) {
         }
     }
     if (!seen_digit) return false;
-    double seconds = std::stod(s);  // the shape is validated, so this cannot throw
-    if (seconds > kMaxSeconds) return false;
+    // strtod rather than stod: stod throws on out-of-range input, and a
+    // 400-digit value must produce a normal "invalid value" error, not an exception.
+    // Overflow returns HUGE_VAL (above the limit, so rejected below). Underflow
+    // (e.g. "0.<400 zeros>1") returns a value near 0 with ERANGE; that is accepted
+    // and rounds to 0 ms, since it is a valid non-negative number of seconds.
+    char* end = nullptr;
+    double seconds = std::strtod(s.c_str(), &end);
+    if (end != s.c_str() + s.size()) return false;
+    if (!(seconds <= kMaxSeconds)) return false;
     out = std::chrono::milliseconds(std::llround(seconds * 1000));
     return true;
 }

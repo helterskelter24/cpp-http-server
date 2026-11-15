@@ -175,3 +175,20 @@ TEST(config_usage_lists_every_flag) {
     CHECK(u.find("8080") != std::string::npos);
     CHECK(u.find("8192") != std::string::npos);
 }
+
+TEST(config_rejects_huge_timeout_without_throwing) {
+    // Used to escape parse_args as std::out_of_range from stod.
+    std::string huge(400, '9');
+    CHECK(error_names(parse({"--request-timeout", huge}), "--request-timeout"));
+    CHECK(error_names(parse({"--request-timeout=" + huge + ".5"}), "--request-timeout"));
+    CHECK(error_names(parse({"--write-timeout", "1" + std::string(400, '0')}), "--write-timeout"));
+    CHECK(error_names(parse({"--port", huge}), "--port"));
+    CHECK(error_names(parse({"--max-body-bytes", huge}), "--max-body-bytes"));
+}
+
+TEST(config_tiny_timeout_underflows_to_zero) {
+    // Valid non-negative number of seconds; rounds to 0 ms instead of crashing.
+    auto r = parse({"--request-timeout", "0." + std::string(400, '0') + "1"});
+    CHECK(r.ok);
+    CHECK_EQ(r.config.request_timeout.count(), 0);
+}
