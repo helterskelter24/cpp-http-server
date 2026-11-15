@@ -8,7 +8,7 @@ import json
 import subprocess
 import time
 
-from harness import S, check, get, loadgen_binary, no_server, run_binary
+from harness import S, check, get, loadgen_binary, no_server, read_response, run_binary
 
 CSV_FIELDS = ["label", "connections", "idle", "keepalive", "requests", "errors",
               "duration_s", "rps", "p50_ms", "p95_ms", "p99_ms", "max_ms"]
@@ -204,3 +204,35 @@ def test_idle_connect_failure_is_a_setup_error(ctx):
         check(code == 2, "args %r: exit code %d, stdout %r" % (extra, code, out))
         check("idle" in err, "no explanation on stderr: %r" % err)
         check(out.strip() == "", "numbers were printed for a failed setup: %r" % out)
+
+
+@no_server
+def test_first_request_of_preconnected_no_keepalive_connection_is_timed_from_run_start(ctx):
+    # A pool server with one worker, held by an idle client, delays the answer
+    # to loadgen's first request until the holder leaves. The connection itself
+    # is established during loadgen's setup (the kernel completes it), so its
+    # first request is sent at run start. That request must be counted, with
+    # its real latency (about the hold time), not dropped as if it had begun
+    # before the run. Pool mode is used whatever mode the suite runs in,
+    # because only one-connection-per-worker gives a deterministic delay.
+    from harness import ServerProc
+    srv = ServerProc(ctx.binary, "pool", ["--threads", "1"])
+    ctx.servers.append(srv)
+    holder = srv.connect()
+    holder.sendall(get("/health"))
+    read_response(holder)  # the worker is now pinned to this connection
+    proc = subprocess.Popen(loadgen_args(srv, "-c", "1", "-d", "1", "--warmup", "0", "--no-keepalive",
+                                         "--csv"),
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        time.sleep(0.4)
+        holder.close()
+        out, err = proc.communicate(timeout=S(15))
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+            proc.communicate()
+    check(proc.returncode == 0, "exit code %d, stderr %r" % (proc.returncode, err))
+    row = parse_csv(out.decode())
+    check(row["errors"] == "0", row)
+    check(float(row["max_ms"]) >= 300, "the delayed first request was not counted: %r" % row)

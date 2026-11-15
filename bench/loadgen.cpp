@@ -365,7 +365,13 @@ public:
         setting_up_ = false;
         const TimePoint begin = Clock::now();
         for (Conn& c : conns_) {
-            if (c.state == State::Ready) begin_request(c);
+            if (c.state != State::Ready) continue;
+            // Connected during setup. With --no-keepalive req_start still holds
+            // the setup-time connect start, which would put this first request
+            // before the window (dropped) and age it toward a false timeout. The
+            // connect is not part of this run, so the clock starts at the write.
+            c.req_start = Clock::now();
+            begin_request(c);
         }
 
         std::vector<epoll_event> events(256);
