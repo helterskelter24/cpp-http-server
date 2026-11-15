@@ -98,6 +98,12 @@ cleanup() {
         done
         kill -KILL "$pid" 2>/dev/null || true
     done
+    # `timeout` makes itself the leader of a new process group, and loadgen is
+    # in that group. Killing the whole group also catches a loadgen whose
+    # timeout process is already gone, so it cannot be left orphaned.
+    if [ -n "$LOADGEN_PID" ]; then
+        kill -KILL -- "-$LOADGEN_PID" 2>/dev/null || true
+    fi
     rm -rf "$TMP"
 }
 trap cleanup EXIT
