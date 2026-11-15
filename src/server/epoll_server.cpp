@@ -34,8 +34,11 @@ constexpr auto kMaxWait = std::chrono::milliseconds(1000);
 constexpr auto kAcceptRetry = std::chrono::milliseconds(100);
 // Pause after an unexpected epoll_wait failure, so it cannot become a busy loop.
 constexpr auto kErrorBackoff = std::chrono::milliseconds(50);
-// An output buffer with more capacity than this is released once it drains,
-// so an idle connection does not keep a megabyte from its last big response.
+// An output buffer with more capacity than this is released when its
+// connection goes idle, so an idle connection does not keep a megabyte from
+// its last big response. Not on every drain: a client pipelining requests for
+// large responses drains the buffer many times per event, and freeing it each
+// time would only make the next response allocate and grow it again.
 constexpr size_t kKeepOutputCapacity = 64 * 1024;
 
 // epoll_event.data.ptr for the two descriptors that are not connections. Only
@@ -391,11 +394,7 @@ bool EventLoop::flush(Conn* c) {
     // Same policy as HttpConn's input: erase the sent prefix only once it is
     // at least half the buffer, so each byte is moved O(1) times on average.
     if (c->unsent() == 0) {
-        if (c->out.capacity() > kKeepOutputCapacity) {
-            std::string().swap(c->out);
-        } else {
-            c->out.clear();
-        }
+        c->out.clear();  // keeps the capacity; see kKeepOutputCapacity
         c->out_off = 0;
     } else if (c->out_off >= c->out.size() / 2) {
         c->out.erase(0, c->out_off);
@@ -463,6 +462,11 @@ void EventLoop::update_deadline(Conn* c, Clock::time_point now) {
     } else if (c->in_request) {
         set_deadline(c, Deadline::Request, c->request_started + config_.request_timeout);
     } else {
+        // Idle: nothing unsent and no request under way, so the buffer is empty.
+        if (c->out.capacity() > kKeepOutputCapacity) {
+            std::string().swap(c->out);
+            c->out_off = 0;
+        }
         set_deadline(c, Deadline::KeepAlive, c->idle_since + config_.keepalive_timeout);
     }
 }
