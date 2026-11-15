@@ -1,6 +1,8 @@
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <algorithm>
+#include <cstdlib>
 #include <string>
 
 #include "config.h"
@@ -25,6 +27,12 @@ struct Fixture {
                    [](const hs::Request& req) { return hs::Response::text(200, req.body); });
         router.add(hs::Method::GET, "/big", [](const hs::Request&) {
             return hs::Response::text(200, std::string(kBigBody, 'x'));
+        });
+        // Body is "<n>\n" padded to 4 KiB, so a client can check response order.
+        router.add(hs::Method::GET, "/seq/:n", [](const hs::Request& req) {
+            std::string body = req.params.at("n") + "\n";
+            body.resize(4096, '.');
+            return hs::Response::text(200, body);
         });
     }
 };
@@ -247,4 +255,101 @@ TEST(http_conn_access_log_line) {
 
     CHECK(contains(logged, "[INFO] GET /health 200 15\n"));
     CHECK(contains(logged, "[INFO] HEAD /health 200 0\n"));
+}
+
+TEST(http_conn_wants_input_contract) {
+    Fixture f;
+    hs::HttpConn conn(f.router, f.config, f.stats);
+    CHECK(conn.wants_input());
+    std::string input;
+    for (int i = 0; i < 100; ++i) input += "GET /big HTTP/1.1\r\nHost: x\r\n\r\n";
+    feed(conn, input);
+    CHECK(!conn.wants_input());
+
+    std::string out;
+    CHECK(conn.process(out));
+    // Stopped at the high-water mark with requests still buffered: draining the
+    // output is not enough to allow another read.
+    CHECK(conn.has_pending_input());
+    out.clear();
+    CHECK(!conn.wants_input());
+    while (conn.has_pending_input()) {
+        CHECK(!conn.wants_input());
+        out.clear();
+        CHECK(conn.process(out));
+    }
+    CHECK(conn.wants_input());
+    CHECK_EQ(conn.pending_input_bytes(), 0u);
+
+    // A partial request is held by the parser, not the buffer, so reading the
+    // rest of it is allowed.
+    feed(conn, "GET /health HTTP/1.1\r\nHo");
+    CHECK(conn.process(out));
+    CHECK(conn.mid_request());
+    CHECK(conn.wants_input());
+
+    // A closed connection never wants more input.
+    feed(conn, "st: x\r\nConnection: close\r\n\r\n");
+    CHECK(!conn.process(out));
+    CHECK(!conn.wants_input());
+}
+
+TEST(http_conn_input_bounded_under_pipelining) {
+    // A server that follows the read contract, against a client that pipelines
+    // without end and reads responses slowly.
+    Fixture f;
+    f.config.max_keepalive_requests = 1000000;
+    hs::HttpConn conn(f.router, f.config, f.stats);
+
+    constexpr size_t kReadChunk = 16 * 1024;     // what one recv() returns
+    constexpr size_t kClientDrain = 256 * 1024;  // what the client reads per cycle
+
+    std::string client_stream;  // requests generated but not yet sent
+    unsigned next_request = 0;
+    std::string out;            // server's unsent output
+    std::string received;       // bytes the client has read, not yet parsed
+    unsigned next_expected = 0;
+    size_t max_pending = 0;
+    unsigned reads = 0;
+
+    for (int cycle = 0; cycle < 300; ++cycle) {
+        if (conn.wants_input() && out.size() < hs::kOutputHighWater) {  // rule (a)
+            while (client_stream.size() < kReadChunk)
+                client_stream += "GET /seq/" + std::to_string(next_request++) +
+                                 " HTTP/1.1\r\nHost: x\r\n\r\n";
+            conn.on_data(client_stream.data(), kReadChunk);
+            client_stream.erase(0, kReadChunk);
+            ++reads;
+            max_pending = std::max(max_pending, conn.pending_input_bytes());
+            CHECK(conn.process(out));  // rule (b)
+        } else if (out.size() < hs::kOutputHighWater && conn.has_pending_input()) {
+            CHECK(conn.process(out));  // rule (c)
+        }
+        max_pending = std::max(max_pending, conn.pending_input_bytes());
+
+        // The client reads part of the output and checks each whole response.
+        size_t n = std::min(out.size(), kClientDrain);
+        received.append(out, 0, n);
+        out.erase(0, n);
+        for (;;) {
+            size_t head_end = received.find("\r\n\r\n");
+            if (head_end == std::string::npos) break;
+            size_t cl = received.find("Content-Length: ");
+            CHECK(cl != std::string::npos && cl < head_end);
+            if (cl == std::string::npos || cl > head_end) return;
+            size_t body_len = std::strtoul(received.c_str() + cl + 16, nullptr, 10);
+            size_t total = head_end + 4 + body_len;
+            if (received.size() < total) break;
+            CHECK_EQ(received.compare(0, 15, "HTTP/1.1 200 OK"), 0);
+            std::string body = received.substr(head_end + 4, body_len);
+            CHECK_EQ(body.substr(0, body.find('\n')), std::to_string(next_expected));
+            ++next_expected;
+            received.erase(0, total);
+        }
+    }
+
+    CHECK(max_pending <= kReadChunk);
+    CHECK(reads > 5);              // the loop really went around the read path
+    CHECK(next_expected > 1000);   // and the client got many responses in order
+    CHECK(next_expected <= conn.requests_served());
 }

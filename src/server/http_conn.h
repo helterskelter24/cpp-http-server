@@ -20,6 +20,24 @@ constexpr size_t kOutputHighWater = 1u << 20;  // 1 MiB
 // servers (blocking pool and epoll) use it, so pipelining order, keep-alive
 // decisions and output backpressure behave the same in both and are tested
 // without any networking. One instance belongs to one thread at a time.
+//
+// Read contract. A server must follow all three rules:
+//   (a) read from the socket only while wants_input() is true and its unsent
+//       output is below kOutputHighWater;
+//   (b) call process() after every on_data();
+//   (c) whenever unsent output drops below kOutputHighWater and
+//       has_pending_input() is true, call process() again instead of reading.
+// Under this contract pending_input_bytes() never exceeds the size of one read
+// (the largest `len` passed to on_data()). Reads happen only when nothing is
+// buffered, so a read leaves at most `len` bytes; process() can only shrink
+// that. A request split across reads does not stay here: the parser takes every
+// byte it is given while it needs more, and holds the partial request itself,
+// capped by max_header_bytes plus max_body_bytes. So the per-connection input
+// memory is at most one read plus those parser limits.
+//
+// Rule (a) is what stops a pipelining client from growing the buffer: after a
+// high-water stop the unanswered requests stay buffered, and reading more on
+// top of them as soon as output drains would let input pile up without limit.
 class HttpConn {
 public:
     HttpConn(const Router& router, const Config& config, Stats& stats);
@@ -37,6 +55,11 @@ public:
     bool process(std::string& out);
 
     bool has_pending_input() const;  // unparsed bytes are buffered
+    size_t pending_input_bytes() const { return input_.size() - input_pos_; }
+
+    // True when the server may read more from the socket (rule (a) above):
+    // the connection is still open and every buffered byte has been handled.
+    bool wants_input() const { return !closed_ && !has_pending_input(); }
     bool mid_request() const;        // a request has started but is not complete
 
     // Shutdown has begun: every later response says Connection: close.
@@ -66,14 +89,8 @@ private:
     // quadratic; compact() erases the consumed prefix once it is at least half
     // the buffer, so each byte is moved O(1) times on average.
     //
-    // This buffer needs no size limit of its own, provided the server keeps two
-    // rules: call process() after every on_data(), and stop reading from the
-    // socket while its unsent output is at or above kOutputHighWater. process()
-    // returns early only for high output (or to close), so whenever the server
-    // is allowed to read again the parser has taken every buffered byte; a
-    // partial request lives in the parser, which caps it at max_header_bytes +
-    // max_body_bytes. The buffer therefore never holds more than one read's
-    // worth of bytes.
+    // No size limit of its own is needed: the read contract above bounds it
+    // to one read.
     std::string input_;
     size_t input_pos_ = 0;
 
