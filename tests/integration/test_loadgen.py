@@ -223,11 +223,17 @@ def test_first_request_of_preconnected_no_keepalive_connection_is_timed_from_run
     holder = srv.connect()
     holder.sendall(get("/health"))
     read_response(holder)  # the worker is now pinned to this connection
-    proc = subprocess.Popen(loadgen_args(srv, "-c", "1", "-d", "1", "--warmup", "0", "--no-keepalive",
-                                         "--csv"),
+    # The hold is scaled so a loadgen that starts slowly (sanitizer builds on
+    # a busy host) still sends its request well before the holder leaves. The
+    # 300 ms below is a lower bound and stays unscaled: the request cannot
+    # wait less than the hold minus loadgen's start-up time. The run lasts a
+    # second longer than the hold, so the delayed request completes inside it.
+    hold = S(0.5)
+    proc = subprocess.Popen(loadgen_args(srv, "-c", "1", "-d", "%g" % (hold + 1), "--warmup", "0",
+                                         "--no-keepalive", "--csv"),
                             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
-        time.sleep(0.4)
+        time.sleep(hold)
         holder.close()
         out, err = proc.communicate(timeout=S(15))
     finally:
@@ -237,4 +243,4 @@ def test_first_request_of_preconnected_no_keepalive_connection_is_timed_from_run
     check(proc.returncode == 0, "exit code %d, stderr %r" % (proc.returncode, err))
     row = parse_csv(out.decode())
     check(row["errors"] == "0", row)
-    check(float(row["max_ms"]) >= 300, "the delayed first request was not counted: %r" % row)
+    check(float(row["max_ms"]) >= 300, "the delayed first request (held %.1fs) was not counted: %r" % (hold, row))
