@@ -45,10 +45,8 @@ bool set_int_option(int fd, int level, int name, int value) {
     return setsockopt(fd, level, name, &value, sizeof(value)) == 0;
 }
 
-}  // namespace
-
-ListenResult listen_tcp(const std::string& bind, uint16_t port, int backlog, bool reuse_port,
-                        bool non_blocking) {
+// A TCP socket bound to bind:port, not yet listening.
+ListenResult bind_tcp(const std::string& bind, uint16_t port, bool reuse_port, bool non_blocking) {
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
@@ -73,11 +71,27 @@ ListenResult listen_tcp(const std::string& bind, uint16_t port, int backlog, boo
 
     if (::bind(fd.get(), reinterpret_cast<const sockaddr*>(&addr), sizeof(addr)) != 0)
         return listen_error("bind", bind, port);
-    if (::listen(fd.get(), backlog) != 0) return listen_error("listen", bind, port);
 
     ListenResult r;
     r.fd = std::move(fd);
     return r;
+}
+
+}  // namespace
+
+ListenResult listen_tcp(const std::string& bind, uint16_t port, int backlog, bool reuse_port,
+                        bool non_blocking) {
+    ListenResult r = bind_tcp(bind, port, reuse_port, non_blocking);
+    if (!r.error.empty()) return r;
+    if (::listen(r.fd.get(), backlog) != 0) return listen_error("listen", bind, port);
+    return r;
+}
+
+std::string check_port_free(const std::string& bind, uint16_t port) {
+    // Bound without SO_REUSEPORT, so any socket already listening on the port
+    // makes this fail, whatever options that socket has. The probe never
+    // listens and is closed on return.
+    return bind_tcp(bind, port, /*reuse_port=*/false, /*non_blocking=*/false).error;
 }
 
 uint16_t local_port(int fd) {

@@ -69,8 +69,8 @@ int main(int argc, char** argv) {
     hs::register_static(router, std::make_shared<const hs::StaticFiles>(config.root));
 
     std::unique_ptr<hs::Server> server = hs::make_server(config, router, stats);
-    if (!server) {
-        hs::log_msg(hs::LogLevel::Error, "epoll mode is not built yet");
+    if (!server) {  // every Mode has a server; this only guards against a new one being missed
+        hs::log_msg(hs::LogLevel::Error, "no server implementation for the selected mode");
         return 1;
     }
     std::string error;

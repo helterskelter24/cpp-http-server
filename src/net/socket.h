@@ -43,6 +43,13 @@ struct ListenResult {
 ListenResult listen_tcp(const std::string& bind, uint16_t port, int backlog, bool reuse_port,
                         bool non_blocking);
 
+// Empty if bind:port could be bound by a socket without SO_REUSEPORT right
+// now, otherwise an error in the listen_tcp style ("bind 127.0.0.1:8080:
+// Address already in use"). Sockets that all set SO_REUSEPORT share a port
+// silently (for the same user), so a server that listens that way calls this
+// first to make a second instance on the same port fail instead.
+std::string check_port_free(const std::string& bind, uint16_t port);
+
 // The port a socket is bound to (useful after binding port 0); 0 on error.
 uint16_t local_port(int fd);
 

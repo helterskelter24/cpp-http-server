@@ -8,7 +8,7 @@ import select
 import socket
 import time
 
-from harness import S, check, flags, get, read_response, wait_eof
+from harness import S, check, flags, get, read_response, tcp_wmem_max, wait_eof
 
 
 @flags("--keepalive-timeout", "0.5")
@@ -96,15 +96,6 @@ def test_prompt_request_not_dropped_by_idle_timeout(srv):
         wait_eof(holder, S(2))
 
 
-def _tcp_wmem_max():
-    """The most a socket's send buffer can grow to by autotuning."""
-    try:
-        with open("/proc/sys/net/ipv4/tcp_wmem") as f:
-            return int(f.read().split()[2])
-    except (OSError, ValueError, IndexError):
-        return 4 * 1024 * 1024
-
-
 @flags("--write-timeout", "0.5")
 def test_write_timeout_closes_stalled_reader(srv):
     # The server can push into the network at most its send buffer (which the
@@ -112,7 +103,7 @@ def test_write_timeout_closes_stalled_reader(srv):
     # buffer. The receive buffer is shrunk before connecting, so the window
     # offered in the handshake is already small, and the request count is
     # derived from tcp_wmem so the responses overflow both on any host.
-    count = max(400, (_tcp_wmem_max() + 2 * 1024 * 1024) // 16384)
+    count = max(400, (tcp_wmem_max() + 2 * 1024 * 1024) // 16384)
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)

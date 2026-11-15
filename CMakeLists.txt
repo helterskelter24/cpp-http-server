@@ -54,3 +54,7 @@ add_test(NAME integration_pool
          COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/integration/run_all.py
                  --binary $<TARGET_FILE:httpserver> --mode pool)
 set_tests_properties(integration_pool PROPERTIES TIMEOUT 300)
+add_test(NAME integration_epoll
+         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/integration/run_all.py
+                 --binary $<TARGET_FILE:httpserver> --mode epoll)
+set_tests_properties(integration_epoll PROPERTIES TIMEOUT 300)

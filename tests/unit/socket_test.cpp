@@ -45,6 +45,22 @@ TEST(socket_listen_port_in_use) {
     CHECK(second.error.find("127.0.0.1") != std::string::npos);
 }
 
+TEST(socket_check_port_free_detects_reuse_port_listener) {
+    hs::ListenResult first = hs::listen_tcp("127.0.0.1", 0, 16, true, true);
+    CHECK_EQ(first.error, "");
+    uint16_t port = hs::local_port(first.fd.get());
+    // A second SO_REUSEPORT listener shares the port without any error ...
+    hs::ListenResult second = hs::listen_tcp("127.0.0.1", port, 16, true, true);
+    CHECK_EQ(second.error, "");
+    // ... which is why the probe binds without it.
+    std::string error = hs::check_port_free("127.0.0.1", port);
+    CHECK(error.find("bind 127.0.0.1:" + std::to_string(port)) != std::string::npos);
+
+    first.fd.reset();
+    second.fd.reset();
+    CHECK_EQ(hs::check_port_free("127.0.0.1", port), "");
+}
+
 TEST(socket_listen_bad_address) {
     hs::ListenResult r = hs::listen_tcp("not-an-ip", 0, 16, false, false);
     CHECK(!r.fd.valid());

@@ -7,6 +7,7 @@ responses, a missing body after HEAD, or a connection closed without a reply.
 
 import os
 import re
+import resource
 import select
 import signal
 import socket
@@ -165,6 +166,56 @@ def readable_within(sock, timeout):
         return True
     r, _, _ = select.select([sock], [], [], timeout)
     return bool(r)
+
+
+# ---- host resources ----
+
+
+def need_fds(count):
+    """Raises this process's soft RLIMIT_NOFILE to at least `count` (servers
+    started afterwards inherit it). Skips the test if the hard limit is lower."""
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if soft != resource.RLIM_INFINITY and soft < count:
+        if hard != resource.RLIM_INFINITY and hard < count:
+            raise Skip("needs %d file descriptors, hard limit is %d" % (count, hard))
+        resource.setrlimit(resource.RLIMIT_NOFILE, (count, hard))
+
+
+def limit_fds(count):
+    """A preexec hook for ServerProc: the server may hold at most `count` descriptors."""
+    def hook():
+        _, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        resource.setrlimit(resource.RLIMIT_NOFILE, (count, hard))
+    return hook
+
+
+def tcp_wmem_max():
+    """The most a socket's send buffer can grow to by autotuning. Tests that
+    need a server's writes to stall must send more than this."""
+    try:
+        with open("/proc/sys/net/ipv4/tcp_wmem") as f:
+            return int(f.read().split()[2])
+    except (OSError, ValueError, IndexError):
+        return 4 * 1024 * 1024
+
+
+def rss_bytes(pid):
+    """Resident set size of a process, from /proc/<pid>/status."""
+    with open("/proc/%d/status" % pid) as f:
+        for line in f:
+            if line.startswith("VmRSS:"):
+                return int(line.split()[1]) * 1024
+    raise TestFailure("no VmRSS line for pid %d" % pid)
+
+
+def cpu_seconds(pid):
+    """User plus system CPU time of a process, from /proc/<pid>/stat."""
+    with open("/proc/%d/stat" % pid) as f:
+        # The command name (field 2) may contain spaces, so split after its ')'.
+        fields = f.read().rpartition(")")[2].split()
+    # utime and stime are fields 14 and 15 of the whole line.
+    ticks = int(fields[11]) + int(fields[12])
+    return ticks / os.sysconf("SC_CLK_TCK")
 
 
 # ---- the server process ----
