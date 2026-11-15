@@ -18,7 +18,10 @@ set_property(CACHE HS_SANITIZE PROPERTY STRINGS "" asan tsan)
 add_library(hs_flags INTERFACE)
 target_compile_options(hs_flags INTERFACE -Wall -Wextra -Wpedantic -Werror)
 if(HS_SANITIZE STREQUAL "asan")
-  target_compile_options(hs_flags INTERFACE -fsanitize=address,undefined -fno-omit-frame-pointer)
+  # UBSan normally prints its report and carries on, so a unit test hitting
+  # undefined behaviour would still exit 0; -fno-sanitize-recover makes it fail.
+  target_compile_options(hs_flags INTERFACE -fsanitize=address,undefined -fno-sanitize-recover=undefined
+                         -fno-omit-frame-pointer)
   target_link_options(hs_flags INTERFACE -fsanitize=address,undefined)
 elseif(HS_SANITIZE STREQUAL "tsan")
   target_compile_options(hs_flags INTERFACE -fsanitize=thread)

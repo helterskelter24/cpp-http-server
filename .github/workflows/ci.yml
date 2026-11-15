@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      # One configuration failing should not cancel the others: a TSan-only
+      # failure is easier to read next to green release and ASan runs.
+      fail-fast: false
+      matrix:
+        include:
+          - name: release
+            build_type: Release
+            sanitize: ""
+            slowdown: "1"
+          - name: asan
+            build_type: Debug
+            sanitize: asan
+            slowdown: "3"
+          - name: tsan
+            build_type: Debug
+            sanitize: tsan
+            slowdown: "3"
+    env:
+      # Sanitizer builds run several times slower; the integration tests
+      # stretch their timing windows by this factor.
+      HS_TEST_SLOWDOWN: ${{ matrix.slowdown }}
+      # LeakSanitizer is on by default with ASan on Linux; stated so it stays on.
+      ASAN_OPTIONS: detect_leaks=1
+    steps:
+      - uses: actions/checkout@v4
+
+      # Newer runner kernels randomise mmap addresses with more bits than
+      # older ThreadSanitizer runtimes can handle, and TSan binaries then die
+      # at start-up ("unexpected memory mapping"). 28 bits is within what
+      # they support.
+      - name: Reduce ASLR entropy for ThreadSanitizer
+        if: matrix.sanitize == 'tsan'
+        run: sudo sysctl vm.mmap_rnd_bits=28
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DHS_SANITIZE=${{ matrix.sanitize }}
+
+      - name: Build
+        run: cmake --build build -j "$(nproc)"
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure --timeout 600
