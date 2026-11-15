@@ -37,11 +37,11 @@ jobs:
       - uses: actions/checkout@v4
 
       # Newer runner kernels randomise mmap addresses with more bits than
-      # older ThreadSanitizer runtimes can handle, and TSan binaries then die
-      # at start-up ("unexpected memory mapping"). 28 bits is within what
-      # they support.
-      - name: Reduce ASLR entropy for ThreadSanitizer
-        if: matrix.sanitize == 'tsan'
+      # the sanitizer runtimes shipped with GCC 13 can handle: TSan binaries
+      # die at start-up ("unexpected memory mapping"), and ASan can fail in
+      # the same way. 28 bits is within what both support.
+      - name: Reduce ASLR entropy for the sanitizers
+        if: matrix.sanitize != ''
         run: sudo sysctl vm.mmap_rnd_bits=28
 
       - name: Configure
