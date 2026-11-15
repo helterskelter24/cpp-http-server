@@ -230,6 +230,16 @@ bool iequals(std::string_view a, std::string_view b) {
 enum ErrorKind { kConnect, kReset, kTimeout, kStatus, kProtocol, kErrorKinds };
 const char* const kErrorNames[kErrorKinds] = {"connect", "reset", "timeout", "status", "protocol"};
 
+// "timeout 3, status 12": only the kinds that occurred.
+void print_error_kinds(FILE* out, const uint64_t (&by_kind)[kErrorKinds]) {
+    const char* sep = "";
+    for (int k = 0; k < kErrorKinds; ++k) {
+        if (by_kind[k] == 0) continue;
+        std::fprintf(out, "%s%s %llu", sep, kErrorNames[k], static_cast<unsigned long long>(by_kind[k]));
+        sep = ", ";
+    }
+}
+
 struct Result {
     std::vector<uint64_t> latencies_ns;
     uint64_t errors = 0;
@@ -838,6 +848,11 @@ int run(const Options& o) {
                     static_cast<unsigned long long>(errors), o.duration, rps, p50, p95, p99, max);
         // stdout carries exactly one line; anything else goes to stderr.
         if (idle_closed > 0) std::fprintf(stderr, "loadgen: idle_closed=%llu\n", static_cast<unsigned long long>(idle_closed));
+        if (errors > 0) {
+            std::fprintf(stderr, "loadgen: errors: ");
+            print_error_kinds(stderr, by_kind);
+            std::fprintf(stderr, "\n");
+        }
     } else {
         std::printf("target:      %s:%d%s (%s)\n", o.host.c_str(), o.port, o.path.c_str(),
                     o.keepalive ? "keep-alive" : "new connection per request");
@@ -845,12 +860,8 @@ int run(const Options& o) {
         std::printf("requests:    %llu\n", static_cast<unsigned long long>(requests));
         std::printf("errors:      %llu", static_cast<unsigned long long>(errors));
         if (errors > 0) {
-            const char* sep = " (";
-            for (int k = 0; k < kErrorKinds; ++k) {
-                if (by_kind[k] == 0) continue;
-                std::printf("%s%s %llu", sep, kErrorNames[k], static_cast<unsigned long long>(by_kind[k]));
-                sep = ", ";
-            }
+            std::printf(" (");
+            print_error_kinds(stdout, by_kind);
             std::printf(")");
         }
         std::printf("\n");

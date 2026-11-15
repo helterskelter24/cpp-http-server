@@ -93,6 +93,8 @@ def test_counts_errors(ctx):
     check(code == 1, "exit code %d, stderr %r" % (code, err))
     row = parse_csv(out)
     check(row["requests"] == "0" and int(row["errors"]) > 0, row)
+    # stdout stays one CSV line; the kind of error goes to stderr.
+    check("loadgen: errors: status %s" % row["errors"] in err, "no error breakdown on stderr: %r" % err)
 
 
 @no_server
