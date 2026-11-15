@@ -48,3 +48,9 @@ add_executable(unit_tests tests/unit/main.cpp ${HS_UNIT_TESTS})
 target_include_directories(unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/tests/unit)
 target_link_libraries(unit_tests PRIVATE hs_core)
 add_test(NAME unit COMMAND unit_tests)
+
+# The shared integration suite drives the real binary over loopback sockets.
+add_test(NAME integration_pool
+         COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/integration/run_all.py
+                 --binary $<TARGET_FILE:httpserver> --mode pool)
+set_tests_properties(integration_pool PROPERTIES TIMEOUT 300)
