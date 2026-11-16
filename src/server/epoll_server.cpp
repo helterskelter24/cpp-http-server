@@ -11,6 +11,7 @@
 #include <exception>
 #include <iterator>
 #include <list>
+#include <string>
 #include <unordered_map>
 #include <utility>
 
@@ -628,9 +629,16 @@ bool EpollServer::start(std::string& error) {
     // leaves nothing running.
     std::lock_guard<std::mutex> lock(stop_mu_);
     loops_ = std::move(loops);
-    for (auto& loop : loops_) {
-        EventLoop* l = loop.get();
-        threads_.emplace_back([l] { l->run(); });
+    try {
+        for (auto& loop : loops_) {
+            EventLoop* l = loop.get();
+            threads_.emplace_back([l] { l->run(); });
+        }
+    } catch (const std::exception& e) {
+        // Out of threads or memory. Loops already running are stopped and
+        // joined by the destructor, which the caller reaches by giving up.
+        error = std::string("cannot create threads: ") + e.what();
+        return false;
     }
     return true;
 }

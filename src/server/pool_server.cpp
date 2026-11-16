@@ -9,6 +9,8 @@
 #include <unistd.h>
 
 #include <exception>
+#include <new>
+#include <string>
 #include <utility>
 
 #include "http/response.h"
@@ -61,8 +63,16 @@ bool PoolServer::start(std::string& error) {
     }
     listen_fd_ = std::move(listening.fd);
     port_ = local_port(listen_fd_.get());
-    pool_ = std::make_unique<ThreadPool>(config_.threads, config_.queue_capacity);
-    acceptor_ = std::thread([this] { accept_loop(); });
+    // Creating threads can fail (std::system_error) when the process or the
+    // system is out of threads or memory; that is a start-up error like any
+    // other, not a reason to terminate.
+    try {
+        pool_ = std::make_unique<ThreadPool>(config_.threads, config_.queue_capacity);
+        acceptor_ = std::thread([this] { accept_loop(); });
+    } catch (const std::exception& e) {
+        error = std::string("cannot create threads: ") + e.what();
+        return false;  // the destructor shuts down a pool that was created
+    }
     return true;
 }
 
@@ -162,7 +172,14 @@ void PoolServer::hand_off(Fd conn) {
     // the task, the task is destroyed unrun and ownership comes back here.
     int fd = conn.release();
     Clock::time_point accepted = Clock::now();
-    if (pool_->try_submit([this, fd, accepted] { run_connection(fd, accepted); })) return;
+    bool submitted = false;
+    try {
+        submitted = pool_->try_submit([this, fd, accepted] { run_connection(fd, accepted); });
+    } catch (const std::bad_alloc&) {
+        // Out of memory while queueing: refuse this connection as if the queue
+        // were full, rather than let the exception end the acceptor thread.
+    }
+    if (submitted) return;
 
     Fd rejected(fd);
     reject_busy(rejected.get());

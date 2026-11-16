@@ -6,7 +6,16 @@ namespace hs {
 
 ThreadPool::ThreadPool(size_t threads, size_t capacity) : capacity_(capacity) {
     workers_.reserve(threads);
-    for (size_t i = 0; i < threads; ++i) workers_.emplace_back([this] { worker_loop(); });
+    try {
+        for (size_t i = 0; i < threads; ++i) workers_.emplace_back([this] { worker_loop(); });
+    } catch (...) {
+        // std::thread throws std::system_error when the system cannot create
+        // another thread. The destructor does not run for a constructor that
+        // throws, and destroying a joinable std::thread calls std::terminate,
+        // so the workers already started are stopped and joined here.
+        shutdown();
+        throw;
+    }
 }
 
 ThreadPool::~ThreadPool() { shutdown(); }

@@ -217,6 +217,22 @@ def limit_fds(count):
     return hook
 
 
+def limit_address_space(nbytes):
+    """A preexec hook: the process may map at most `nbytes` of virtual memory."""
+    def hook():
+        resource.setrlimit(resource.RLIMIT_AS, (nbytes, nbytes))
+    return hook
+
+
+def is_sanitizer_build(binary):
+    """True if the binary carries the ASan or TSan runtime. Those reserve
+    terabytes of address space at start-up, so they cannot run under an
+    RLIMIT_AS cap at all."""
+    with open(binary, "rb") as f:
+        data = f.read()
+    return b"__asan_init" in data or b"__tsan_init" in data
+
+
 def tcp_wmem_max():
     """The most a socket's send buffer can grow to by autotuning. Tests that
     need a server's writes to stall must send more than this."""
@@ -253,11 +269,11 @@ def _base_args(binary, mode, port=0, root=WWW):
     return [binary, "--port", str(port), "--bind", "127.0.0.1", "--root", root, "--mode", mode]
 
 
-def run_binary(args, timeout):
+def run_binary(args, timeout, preexec=None):
     """Runs the binary to completion. Returns (exit code, stdout, stderr).
     Kills it and fails if it is still running after `timeout` seconds, or if
     it printed a sanitizer report."""
-    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, preexec_fn=preexec)
     try:
         out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:

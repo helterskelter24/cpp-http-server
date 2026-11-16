@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 
 #include <cstdio>
+#include <exception>
 #include <memory>
 #include <string>
 
@@ -62,30 +63,39 @@ int main(int argc, char** argv) {
     // polls it and SIGPIPE is already ignored when the first send happens.
     hs::ShutdownSignal::instance().install();
 
-    hs::Stats stats;
-    hs::Router router;
-    hs::register_routes(router, hs::AppContext{&config, &stats});
-    hs::register_static(router, std::make_shared<const hs::StaticFiles>(config.root));
+    // Start-up allocates and creates threads. Running out of either is
+    // reported as a start-up failure (exit 1) instead of ending in
+    // std::terminate and a core dump. This covers main's thread only; the
+    // server threads catch what they can handle themselves.
+    try {
+        hs::Stats stats;
+        hs::Router router;
+        hs::register_routes(router, hs::AppContext{&config, &stats});
+        hs::register_static(router, std::make_shared<const hs::StaticFiles>(config.root));
 
-    std::unique_ptr<hs::Server> server = hs::make_server(config, router, stats);
-    if (!server) {  // every Mode has a server; this only guards against a new one being missed
-        hs::log_msg(hs::LogLevel::Error, "no server implementation for the selected mode");
+        std::unique_ptr<hs::Server> server = hs::make_server(config, router, stats);
+        if (!server) {  // every Mode has a server; this only guards against a new one being missed
+            hs::log_msg(hs::LogLevel::Error, "no server implementation for the selected mode");
+            return 1;
+        }
+        std::string error;
+        if (!server->start(error)) {
+            hs::log_msg(hs::LogLevel::Error, "cannot start: %s", error.c_str());
+            return 1;
+        }
+        hs::log_msg(hs::LogLevel::Info, "listening on %s:%u mode=%s threads=%u",
+                    config.bind.c_str(), static_cast<unsigned>(server->port()),
+                    config.mode == hs::Mode::Pool ? "pool" : "epoll", config.threads);
+
+        wait_for_shutdown_signal();
+        hs::log_msg(hs::LogLevel::Info, "shutting down");
+        server->stop();
+        server->join();
+        hs::log_msg(hs::LogLevel::Info, "stopped after %llu requests",
+                    static_cast<unsigned long long>(stats.requests_total.load()));
+        return 0;
+    } catch (const std::exception& e) {
+        hs::log_msg(hs::LogLevel::Error, "fatal: %s", e.what());
         return 1;
     }
-    std::string error;
-    if (!server->start(error)) {
-        hs::log_msg(hs::LogLevel::Error, "cannot start: %s", error.c_str());
-        return 1;
-    }
-    hs::log_msg(hs::LogLevel::Info, "listening on %s:%u mode=%s threads=%u", config.bind.c_str(),
-                static_cast<unsigned>(server->port()),
-                config.mode == hs::Mode::Pool ? "pool" : "epoll", config.threads);
-
-    wait_for_shutdown_signal();
-    hs::log_msg(hs::LogLevel::Info, "shutting down");
-    server->stop();
-    server->join();
-    hs::log_msg(hs::LogLevel::Info, "stopped after %llu requests",
-                static_cast<unsigned long long>(stats.requests_total.load()));
-    return 0;
 }

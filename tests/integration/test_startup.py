@@ -2,7 +2,7 @@
 
 import os
 
-from harness import S, check, no_server, run_binary
+from harness import S, Skip, check, is_sanitizer_build, limit_address_space, no_server, run_binary
 
 
 @no_server
@@ -34,3 +34,17 @@ def test_help_flag(ctx):
     code, out, err = run_binary([ctx.binary, "--help"], S(2))
     check(code == 0, "exit code %r" % code)
     check("Usage:" in out, out)
+
+
+@no_server
+def test_thread_creation_failure_exits_cleanly(ctx):
+    # 200 threads need 1.6 GB of address space for their 8 MiB stacks, so with
+    # 300 MiB the server runs out part-way through starting them. It must say
+    # so and exit 1, not end in std::terminate (SIGABRT) with threads still
+    # joinable.
+    if is_sanitizer_build(ctx.binary):
+        raise Skip("sanitizer runtimes cannot start under an address-space limit")
+    code, _, err = run_binary(ctx.base_args() + ["--threads", "200"], S(5),
+                              preexec=limit_address_space(300 * 2**20))
+    check(code == 1, "exit code %r, stderr %r" % (code, err))
+    check("cannot create threads" in err, err)
