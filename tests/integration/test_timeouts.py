@@ -4,6 +4,7 @@ Lower bounds are not scaled by HS_TEST_SLOWDOWN (closing early is always a
 bug); upper bounds are.
 """
 
+import json
 import select
 import socket
 import time
@@ -33,6 +34,10 @@ def test_request_timeout_408(srv):
         check(r.headers.get("connection") == "close", r.headers)
         check(0.4 <= elapsed <= S(1.5), "408 after %.2fs, expected 0.4..%.1f" % (elapsed, S(1.5)))
         wait_eof(s, S(2))
+    # Both modes count the 408 in the statistics (this server is fresh, so it
+    # is the only 4xx so far; the stats request is counted after it answers).
+    doc = json.loads(srv.request(get("/api/stats")).body)
+    check(doc["responses"]["4xx"] == 1, doc)
 
 
 def _trickle(s, chunks, interval, limit):

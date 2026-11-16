@@ -272,7 +272,11 @@ void PoolServer::serve(int fd, Clock::time_point accepted) {
         }
         if (conn.request_in_progress()) {
             if (now - conn.request_started() >= config_.request_timeout) {
-                if (send_all(fd, conn.timeout_response())) stats_.record(408);
+                // Counted when the server decides to answer, as HttpConn counts
+                // every other response and the epoll server counts its 408s,
+                // whether or not the client is still there to receive it.
+                stats_.record(408);
+                send_all(fd, conn.timeout_response());
                 return;
             }
         } else if (now - idle_since >= config_.keepalive_timeout) {
