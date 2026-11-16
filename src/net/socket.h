@@ -53,8 +53,6 @@ std::string check_port_free(const std::string& bind, uint16_t port);
 // The port a socket is bound to (useful after binding port 0); 0 on error.
 uint16_t local_port(int fd);
 
-bool set_non_blocking(int fd);
-
 // Disables Nagle's algorithm. Best effort: a failure only costs latency.
 void set_no_delay(int fd);
 

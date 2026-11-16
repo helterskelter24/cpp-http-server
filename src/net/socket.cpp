@@ -2,7 +2,6 @@
 
 #include <arpa/inet.h>
 #include <errno.h>
-#include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <signal.h>
@@ -100,12 +99,6 @@ uint16_t local_port(int fd) {
     if (getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len) != 0) return 0;
     if (addr.sin_family != AF_INET) return 0;
     return ntohs(addr.sin_port);
-}
-
-bool set_non_blocking(int fd) {
-    int flags = fcntl(fd, F_GETFL);
-    if (flags < 0) return false;
-    return fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
 }
 
 void set_no_delay(int fd) { set_int_option(fd, IPPROTO_TCP, TCP_NODELAY, 1); }

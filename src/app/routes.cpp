@@ -63,8 +63,8 @@ Response stats(const Request&, const AppContext& ctx) {
     auto uptime = std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::steady_clock::now() - s.started);
 
-    // Counters go out as integers: JsonWriter::value(double) keeps only 6
-    // significant digits, which would corrupt large counts.
+    // Counters go out as exact 64-bit integers; JsonWriter has no floating-point
+    // value on purpose, so nothing here can be rounded.
     JsonWriter w;
     w.begin_object();
     w.key("uptime_seconds").value(static_cast<uint64_t>(uptime.count()));

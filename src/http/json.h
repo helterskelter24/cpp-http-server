@@ -26,7 +26,6 @@ public:
     JsonWriter& value(const char* s);
     JsonWriter& value(int64_t n);
     JsonWriter& value(uint64_t n);
-    JsonWriter& value(double d);
     JsonWriter& value(bool b);
     JsonWriter& null();
     std::string str() const { return out_; }

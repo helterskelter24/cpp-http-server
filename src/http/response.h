@@ -14,8 +14,11 @@ struct Response {
     std::string body;
 
     static Response json(int status, std::string body);  // Content-Type: application/json
-    static Response text(int status, std::string body);  // text/plain; charset=utf-8
-    static Response error(int status);                   // JSON error body
+    // text/plain; charset=utf-8. No built-in route uses it; the router and
+    // connection unit tests need a response whose body is exactly a string
+    // they choose, and it is the natural counterpart of json().
+    static Response text(int status, std::string body);
+    static Response error(int status);  // JSON error body
 };
 
 // "Unknown" for codes that are not listed.

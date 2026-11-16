@@ -35,6 +35,8 @@ public:
     // then joins them. Idempotent; a second caller waits until the join is done.
     void shutdown();
 
+    // Tasks waiting for a worker. Only the unit tests call it: it is how they
+    // see that the queue bound holds without racing the workers.
     size_t queued() const;
 
 private:

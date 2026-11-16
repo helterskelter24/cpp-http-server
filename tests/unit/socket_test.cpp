@@ -97,14 +97,6 @@ TEST(socket_fd_move_and_release) {
     CHECK_EQ(fcntl(raw, F_GETFD), -1);
 }
 
-TEST(socket_set_non_blocking) {
-    int p[2];
-    CHECK_EQ(pipe(p), 0);
-    hs::Fd r(p[0]), w(p[1]);
-    CHECK(hs::set_non_blocking(r.get()));
-    CHECK(fcntl(r.get(), F_GETFL) & O_NONBLOCK);
-}
-
 TEST(shutdown_signal_trigger) {
     hs::ShutdownSignal& s = hs::ShutdownSignal::instance();
     s.install();

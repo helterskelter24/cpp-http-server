@@ -1,6 +1,5 @@
 #include "http/json.h"
 
-#include <cmath>
 #include <cstdio>
 
 namespace hs {
@@ -162,18 +161,6 @@ JsonWriter& JsonWriter::value(int64_t n) {
 JsonWriter& JsonWriter::value(uint64_t n) {
     before_item();
     out_ += std::to_string(n);
-    return *this;
-}
-
-JsonWriter& JsonWriter::value(double d) {
-    // JSON has no NaN or Infinity, so those become null.
-    if (!std::isfinite(d)) return null();
-    before_item();
-    // snprintf with %g uses the C locale's decimal point only if setlocale was
-    // never called; this server never calls it, so output is always '.'.
-    char buf[32];
-    std::snprintf(buf, sizeof buf, "%.6g", d);
-    out_ += buf;
     return *this;
 }
 

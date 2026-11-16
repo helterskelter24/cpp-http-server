@@ -6,6 +6,7 @@ enum class LogLevel { Debug, Info, Warn, Error };
 
 // Messages below this level are dropped before any formatting happens.
 void log_set_level(LogLevel level);
+// The level is process-wide; tests read it so they can restore it afterwards.
 LogLevel log_level();
 
 // printf-style, one line to stderr: "YYYY-MM-DD HH:MM:SS.mmm [LEVEL] message\n".

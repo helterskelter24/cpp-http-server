@@ -1,7 +1,6 @@
 #include "http/json.h"
 
 #include <cctype>
-#include <cmath>
 #include <string>
 
 #include "test.h"
@@ -107,10 +106,10 @@ TEST(json_writer_nested) {
 TEST(json_writer_numbers) {
     JsonWriter w;
     w.begin_array();
-    w.value(1.5).value(static_cast<uint64_t>(18446744073709551615ULL));
-    w.value(std::nan("")).value(INFINITY);
+    w.value(static_cast<uint64_t>(18446744073709551615ULL));
+    w.value(static_cast<int64_t>(-9223372036854775807LL - 1));
     w.end_array();
-    CHECK_EQ(w.str(), "[1.5,18446744073709551615,null,null]");
+    CHECK_EQ(w.str(), "[18446744073709551615,-9223372036854775808]");
 }
 
 TEST(json_writer_empty_containers_and_escaped_key) {
