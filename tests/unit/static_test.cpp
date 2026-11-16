@@ -84,6 +84,8 @@ TEST(mime_table) {
     CHECK_EQ(hs::mime_type("x.pdf"), "application/pdf");
     CHECK_EQ(hs::mime_type("x.wasm"), "application/wasm");
     CHECK_EQ(hs::mime_type("X.HTML"), "text/html");
+    // Bytes >= 0x80 are not letters to fold: no match, and no undefined behaviour.
+    CHECK_EQ(hs::mime_type("x.\xc3\x89"), "application/octet-stream");
     CHECK_EQ(hs::mime_type("noext"), "application/octet-stream");
     CHECK_EQ(hs::mime_type("x.unknown"), "application/octet-stream");
     // A dot in a directory name is not an extension.

@@ -1,7 +1,8 @@
 #include "http/mime.h"
 
-#include <cctype>
 #include <string>
+
+#include "http/ascii.h"
 
 namespace hs {
 
@@ -31,8 +32,7 @@ std::string_view mime_type(std::string_view path) {
     size_t dot = name.rfind('.');
     if (dot == std::string_view::npos) return "application/octet-stream";
 
-    std::string ext(name.substr(dot + 1));
-    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::string ext = to_lower_ascii(name.substr(dot + 1));
     for (const MimeEntry& e : kTable)
         if (e.ext == ext) return e.type;
     return "application/octet-stream";

@@ -1,19 +1,8 @@
 #include "http/request.h"
 
+#include "http/ascii.h"
+
 namespace hs {
-
-namespace {
-// Not std::tolower: that depends on the C locale and on int/unsigned char conversions.
-char to_lower_ascii(char c) {
-    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
-}
-
-std::string lower(std::string_view s) {
-    std::string out(s);
-    for (char& c : out) c = to_lower_ascii(c);
-    return out;
-}
-}  // namespace
 
 std::string_view method_name(Method m) {
     switch (m) {
@@ -30,11 +19,11 @@ std::string_view method_name(Method m) {
 }
 
 void Headers::add(std::string_view name, std::string_view value) {
-    items_.emplace_back(lower(name), std::string(value));
+    items_.emplace_back(to_lower_ascii(name), std::string(value));
 }
 
 const std::string* Headers::get(std::string_view name) const {
-    std::string wanted = lower(name);
+    std::string wanted = to_lower_ascii(name);
     for (const auto& item : items_) {
         if (item.first == wanted) return &item.second;
     }

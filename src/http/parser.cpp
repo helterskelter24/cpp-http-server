@@ -2,13 +2,11 @@
 
 #include <limits>
 
+#include "http/ascii.h"
+
 namespace hs {
 
 namespace {
-
-char to_lower_ascii(char c) {
-    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
-}
 
 bool iequals(std::string_view a, std::string_view b) {
     if (a.size() != b.size()) return false;
