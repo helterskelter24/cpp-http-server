@@ -1,6 +1,6 @@
 # Benchmark results
 
-Date: 2026-11-15 16:09:05 UTC. Commit: 12770e5 (uncommitted: bench/report.py bench/run.sh). Machine, kernel, compiler and flags: [environment.txt](environment.txt).
+Date: 2026-11-15 16:09:05 UTC. Commit: 356bdda (uncommitted: bench/report.py bench/run.sh). Machine, kernel, compiler and flags: [environment.txt](environment.txt).
 
 Server `--threads 2`, loadgen `-t 1` on the same machine over loopback; 10 s measured after 1 s of warm-up; closed loop (each connection waits for its response before sending the next request). Pool mode runs with `--queue-capacity 4096 --keepalive-timeout 5`. Raw data: [raw.csv](raw.csv).
 
