@@ -74,12 +74,10 @@ struct Conn {
     bool keep_open = true;    // false once process() (or a 408) decided to close
     bool peer_done = false;   // recv() returned 0: the client sends nothing more
 
-    // Clocks, with the same rules as PoolServer::serve: the request clock
-    // starts with a request's first bytes and is never refreshed; the idle
-    // clock starts at accept and restarts when all queued output has been
-    // sent; the write clock restarts on every send that makes progress.
-    bool in_request = false;
-    Clock::time_point request_started{};
+    // Clocks, with the same rules as PoolServer::serve: the request clock is
+    // kept by HttpConn (http.request_in_progress()); the idle clock starts at
+    // accept and restarts when all queued output has been sent; the write
+    // clock restarts on every send that makes progress.
     Clock::time_point idle_since;
     Clock::time_point last_write{};
 
@@ -416,20 +414,7 @@ bool EventLoop::flush(Conn* c) {
     return true;
 }
 
-void EventLoop::handle_input(Conn* c) {
-    unsigned served_before = c->http.requests_served();
-    c->keep_open = c->http.process(c->out);
-    // A finished request stops its clock; a request that begins in the same
-    // bytes gets a fresh one below.
-    if (c->http.requests_served() != served_before) c->in_request = false;
-    bool in_progress = c->http.mid_request() || c->http.has_pending_input();
-    if (!in_progress) {
-        c->in_request = false;
-    } else if (!c->in_request) {
-        c->in_request = true;
-        c->request_started = Clock::now();
-    }
-}
+void EventLoop::handle_input(Conn* c) { c->keep_open = c->http.process(c->out, Clock::now()); }
 
 // Bookkeeping after a connection did I/O and is still open.
 void EventLoop::after_io(Conn* c) {
@@ -472,8 +457,8 @@ void EventLoop::update_deadline(Conn* c, Clock::time_point now) {
         // stays stuck, only flush() making progress moves last_write.
         if (c->deadline_kind != Deadline::Write) c->last_write = now;
         set_deadline(c, Deadline::Write, c->last_write + config_.write_timeout);
-    } else if (c->in_request) {
-        set_deadline(c, Deadline::Request, c->request_started + config_.request_timeout);
+    } else if (c->http.request_in_progress()) {
+        set_deadline(c, Deadline::Request, c->http.request_started() + config_.request_timeout);
     } else {
         // Idle: nothing unsent and no request under way, so the buffer is empty.
         if (c->out.capacity() > kKeepOutputCapacity) {
@@ -526,8 +511,7 @@ void EventLoop::expire_request(Conn* c) {
         return;
     }
     c->out_off = 0;
-    c->keep_open = false;
-    c->in_request = false;
+    c->keep_open = false;  // timeout_response() also stopped the request clock
     // Counted when queued, as HttpConn counts every other response.
     stats_.record(408);
     if (!flush(c) || c->unsent() == 0) {

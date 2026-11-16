@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -40,6 +41,8 @@ constexpr size_t kOutputHighWater = 1u << 20;  // 1 MiB
 // top of them as soon as output drains would let input pile up without limit.
 class HttpConn {
 public:
+    using Clock = std::chrono::steady_clock;
+
     HttpConn(const Router& router, const Config& config, Stats& stats);
 
     // Appends bytes read from the socket to the pending input. Ignored once the
@@ -51,8 +54,9 @@ public:
     // out, when out.size() reaches kOutputHighWater, or after a response that
     // closes the connection. Returns false when the connection must be closed
     // once `out` has been flushed; after that, every call returns false and
-    // does nothing.
-    bool process(std::string& out);
+    // does nothing. `now` is the time the caller read the bytes; it is used
+    // only for the request clock below.
+    bool process(std::string& out, Clock::time_point now);
 
     bool has_pending_input() const;  // unparsed bytes are buffered
     size_t pending_input_bytes() const { return input_.size() - input_pos_; }
@@ -65,9 +69,20 @@ public:
     // Shutdown has begun: every later response says Connection: close.
     void set_draining() { draining_ = true; }
 
+    // The request clock, which both servers judge the request timeout by. A
+    // request is in progress while the parser has started one or unparsed
+    // input is buffered. Its clock starts at the `now` of the process() call
+    // that first found it in progress, and later bytes of the same request do
+    // not refresh it, so a client trickling one header byte at a time still
+    // runs out of time. Finishing a request stops the clock; a request that
+    // begins in the same bytes gets a fresh one.
+    bool request_in_progress() const { return in_request_; }
+    Clock::time_point request_started() const { return request_started_; }
+
     // A 408 with Connection: close, for a request that took too long to arrive.
+    // The connection is finished afterwards, as after any closing response.
     // It does not touch Stats; the caller that sends it records the 408.
-    std::string timeout_response() const;
+    std::string timeout_response();
 
     unsigned requests_served() const { return served_; }
 
@@ -97,6 +112,8 @@ private:
     unsigned served_ = 0;
     bool draining_ = false;
     bool closed_ = false;
+    bool in_request_ = false;
+    Clock::time_point request_started_{};
 };
 
 }  // namespace hs

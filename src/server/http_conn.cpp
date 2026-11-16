@@ -18,8 +18,9 @@ void HttpConn::on_data(const char* data, size_t len) {
     input_.append(data, len);
 }
 
-bool HttpConn::process(std::string& out) {
+bool HttpConn::process(std::string& out, Clock::time_point now) {
     if (closed_) return false;
+    unsigned served_before = served_;
 
     while (input_pos_ < input_.size() && out.size() < kOutputHighWater) {
         size_t available = input_.size() - input_pos_;
@@ -49,6 +50,15 @@ bool HttpConn::process(std::string& out) {
     }
 
     compact();
+
+    // finish() stops the clock on the paths that return false above.
+    if (served_ != served_before) in_request_ = false;
+    if (!mid_request() && !has_pending_input()) {
+        in_request_ = false;
+    } else if (!in_request_) {
+        in_request_ = true;
+        request_started_ = now;
+    }
     return true;
 }
 
@@ -58,8 +68,10 @@ bool HttpConn::has_pending_input() const { return input_pos_ < input_.size(); }
 // means a request is partway in. Leading blank lines do not set it.
 bool HttpConn::mid_request() const { return !closed_ && parser_.started(); }
 
-std::string HttpConn::timeout_response() const {
-    return serialize(Response::error(408), false, false);
+std::string HttpConn::timeout_response() {
+    std::string out = serialize(Response::error(408), false, false);
+    finish();
+    return out;
 }
 
 void HttpConn::emit(const Response& resp, std::string_view method, const std::string& path,
@@ -76,6 +88,7 @@ void HttpConn::emit(const Response& resp, std::string_view method, const std::st
 
 void HttpConn::finish() {
     closed_ = true;
+    in_request_ = false;
     // Whatever followed the closing request is never answered, so it is dropped.
     input_.clear();
     input_.shrink_to_fit();

@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <string>
 
@@ -15,6 +16,10 @@
 namespace {
 
 constexpr size_t kBigBody = 64 * 1024;
+
+using Clock = hs::HttpConn::Clock;
+// The time passed to process() by tests that do not look at the request clock.
+const Clock::time_point kT0{};
 
 // A router with the two routes the tests need, plus /big for backpressure.
 struct Fixture {
@@ -66,7 +71,7 @@ TEST(http_conn_single_request) {
     hs::HttpConn conn(f.router, f.config, f.stats);
     feed(conn, kGetHealth);
     std::string out;
-    CHECK(conn.process(out));
+    CHECK(conn.process(out, kT0));
     CHECK(starts_with(out, "HTTP/1.1 200 OK\r\n"));
     CHECK_EQ(count(out, "HTTP/1.1 "), 1u);
     CHECK(contains(out, "Connection: keep-alive\r\n"));
@@ -84,15 +89,15 @@ TEST(http_conn_split_across_reads) {
     const std::string req = "POST /api/echo HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello";
     std::string out;
     feed(conn, req.substr(0, 10));
-    CHECK(conn.process(out));
+    CHECK(conn.process(out, kT0));
     CHECK(out.empty());
     CHECK(conn.mid_request());
     feed(conn, req.substr(10, 40));
-    CHECK(conn.process(out));
+    CHECK(conn.process(out, kT0));
     CHECK(out.empty());
     CHECK(conn.mid_request());
     feed(conn, req.substr(50));
-    CHECK(conn.process(out));
+    CHECK(conn.process(out, kT0));
     CHECK(starts_with(out, "HTTP/1.1 200 OK\r\n"));
     CHECK(contains(out, "\r\n\r\nhello"));
     CHECK(!conn.mid_request());
@@ -103,7 +108,7 @@ TEST(http_conn_pipelined_in_order) {
     hs::HttpConn conn(f.router, f.config, f.stats);
     feed(conn, kGetHealth + "GET /nope HTTP/1.1\r\nHost: x\r\n\r\n");
     std::string out;
-    CHECK(conn.process(out));
+    CHECK(conn.process(out, kT0));
     size_t first = out.find("HTTP/1.1 200 OK");
     size_t second = out.find("HTTP/1.1 404 Not Found");
     CHECK_EQ(first, 0u);
@@ -119,14 +124,14 @@ TEST(http_conn_connection_close_request) {
     hs::HttpConn conn(f.router, f.config, f.stats);
     feed(conn, "GET /health HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n" + kGetHealth);
     std::string out;
-    CHECK(!conn.process(out));
+    CHECK(!conn.process(out, kT0));
     CHECK_EQ(count(out, "HTTP/1.1 "), 1u);
     CHECK(contains(out, "Connection: close\r\n"));
     CHECK(!conn.has_pending_input());  // leftover after a closing response is discarded
     // The connection is finished: more input is ignored.
     feed(conn, kGetHealth);
     std::string more;
-    CHECK(!conn.process(more));
+    CHECK(!conn.process(more, kT0));
     CHECK(more.empty());
     CHECK_EQ(conn.requests_served(), 1u);
 }
@@ -136,7 +141,7 @@ TEST(http_conn_parse_error_closes) {
     hs::HttpConn conn(f.router, f.config, f.stats);
     feed(conn, "garbage garbage\r\n\r\n");
     std::string out;
-    CHECK(!conn.process(out));
+    CHECK(!conn.process(out, kT0));
     CHECK(starts_with(out, "HTTP/1.1 400 Bad Request\r\n"));
     CHECK(contains(out, "Connection: close\r\n"));
     CHECK_EQ(f.stats.responses_4xx.load(), 1u);
@@ -148,11 +153,11 @@ TEST(http_conn_max_keepalive_requests) {
     hs::HttpConn conn(f.router, f.config, f.stats);
     std::string out;
     feed(conn, kGetHealth);
-    CHECK(conn.process(out));
+    CHECK(conn.process(out, kT0));
     CHECK(contains(out, "Connection: keep-alive\r\n"));
     out.clear();
     feed(conn, kGetHealth);
-    CHECK(!conn.process(out));
+    CHECK(!conn.process(out, kT0));
     CHECK(contains(out, "Connection: close\r\n"));
     CHECK_EQ(conn.requests_served(), 2u);
 }
@@ -163,7 +168,7 @@ TEST(http_conn_draining_closes) {
     conn.set_draining();
     feed(conn, kGetHealth);
     std::string out;
-    CHECK(!conn.process(out));
+    CHECK(!conn.process(out, kT0));
     CHECK(starts_with(out, "HTTP/1.1 200 OK\r\n"));
     CHECK(contains(out, "Connection: close\r\n"));
 }
@@ -173,7 +178,7 @@ TEST(http_conn_head_no_body) {
     hs::HttpConn conn(f.router, f.config, f.stats);
     feed(conn, "HEAD /health HTTP/1.1\r\nHost: x\r\n\r\n");
     std::string out;
-    CHECK(conn.process(out));
+    CHECK(conn.process(out, kT0));
     CHECK(starts_with(out, "HTTP/1.1 200 OK\r\n"));
     CHECK(contains(out, "Content-Length: 15\r\n"));
     CHECK(!contains(out, "status"));
@@ -189,13 +194,13 @@ TEST(http_conn_idle_not_mid_request) {
     hs::HttpConn blank(f.router, f.config, f.stats);
     feed(blank, "\r\n");
     std::string out;
-    CHECK(blank.process(out));
+    CHECK(blank.process(out, kT0));
     CHECK(out.empty());
     CHECK(!blank.mid_request());
 
     // After a full keep-alive request the connection is idle again.
     feed(blank, kGetHealth);
-    CHECK(blank.process(out));
+    CHECK(blank.process(out, kT0));
     CHECK(!blank.mid_request());
 }
 
@@ -207,7 +212,7 @@ TEST(http_conn_output_backpressure) {
     feed(conn, input);
 
     std::string out;
-    CHECK(conn.process(out));
+    CHECK(conn.process(out, kT0));
     CHECK(out.size() >= hs::kOutputHighWater);
     CHECK(out.size() < hs::kOutputHighWater + 70000);
     CHECK(conn.has_pending_input());
@@ -215,7 +220,7 @@ TEST(http_conn_output_backpressure) {
     size_t responses = count(out, "HTTP/1.1 200 OK");
     for (int round = 0; round < 200 && conn.has_pending_input(); ++round) {
         out.clear();
-        CHECK(conn.process(out));
+        CHECK(conn.process(out, kT0));
         responses += count(out, "HTTP/1.1 200 OK");
     }
     CHECK_EQ(responses, 100u);
@@ -229,6 +234,50 @@ TEST(http_conn_timeout_response_is_408_close) {
     std::string r = conn.timeout_response();
     CHECK(starts_with(r, "HTTP/1.1 408 Request Timeout\r\n"));
     CHECK(contains(r, "Connection: close\r\n"));
+}
+
+TEST(http_conn_request_clock) {
+    Fixture f;
+    hs::HttpConn conn(f.router, f.config, f.stats);
+    std::string out;
+    const Clock::time_point t1 = kT0 + std::chrono::seconds(1);
+    const Clock::time_point t2 = kT0 + std::chrono::seconds(2);
+    const Clock::time_point t3 = kT0 + std::chrono::seconds(3);
+
+    // Blank lines before a request do not start one.
+    feed(conn, "\r\n");
+    CHECK(conn.process(out, kT0));
+    CHECK(!conn.request_in_progress());
+
+    // The clock starts with the first bytes of a request and is not refreshed
+    // by later bytes of the same request.
+    feed(conn, "GET /health HT");
+    CHECK(conn.process(out, t1));
+    CHECK(conn.request_in_progress());
+    CHECK(conn.request_started() == t1);
+    feed(conn, "TP/1.1\r\nHo");
+    CHECK(conn.process(out, t2));
+    CHECK(conn.request_started() == t1);
+
+    // Finishing the request stops it; a request that begins in the same bytes
+    // gets a fresh clock.
+    feed(conn, "st: x\r\n\r\nGET /he");
+    CHECK(conn.process(out, t3));
+    CHECK_EQ(conn.requests_served(), 1u);
+    CHECK(conn.request_in_progress());
+    CHECK(conn.request_started() == t3);
+    feed(conn, "alth HTTP/1.1\r\nHost: x\r\n\r\n");
+    CHECK(conn.process(out, t3));
+    CHECK(!conn.request_in_progress());
+
+    // A 408 finishes the connection and stops the clock.
+    feed(conn, "GET /");
+    CHECK(conn.process(out, t3));
+    CHECK(conn.request_in_progress());
+    conn.timeout_response();
+    CHECK(!conn.request_in_progress());
+    CHECK(!conn.wants_input());
+    CHECK(!conn.process(out, t3));
 }
 
 TEST(http_conn_access_log_line) {
@@ -246,7 +295,7 @@ TEST(http_conn_access_log_line) {
     hs::LogLevel old_level = hs::log_level();
     hs::log_set_level(hs::LogLevel::Info);
     std::string out;
-    conn.process(out);
+    conn.process(out, kT0);
     hs::log_set_level(old_level);
     dup2(saved, STDERR_FILENO);
     close(saved);
@@ -269,7 +318,7 @@ TEST(http_conn_wants_input_contract) {
     CHECK(!conn.wants_input());
 
     std::string out;
-    CHECK(conn.process(out));
+    CHECK(conn.process(out, kT0));
     // Stopped at the high-water mark with requests still buffered: draining the
     // output is not enough to allow another read.
     CHECK(conn.has_pending_input());
@@ -278,7 +327,7 @@ TEST(http_conn_wants_input_contract) {
     while (conn.has_pending_input()) {
         CHECK(!conn.wants_input());
         out.clear();
-        CHECK(conn.process(out));
+        CHECK(conn.process(out, kT0));
     }
     CHECK(conn.wants_input());
     CHECK_EQ(conn.pending_input_bytes(), 0u);
@@ -286,13 +335,13 @@ TEST(http_conn_wants_input_contract) {
     // A partial request is held by the parser, not the buffer, so reading the
     // rest of it is allowed.
     feed(conn, "GET /health HTTP/1.1\r\nHo");
-    CHECK(conn.process(out));
+    CHECK(conn.process(out, kT0));
     CHECK(conn.mid_request());
     CHECK(conn.wants_input());
 
     // A closed connection never wants more input.
     feed(conn, "st: x\r\nConnection: close\r\n\r\n");
-    CHECK(!conn.process(out));
+    CHECK(!conn.process(out, kT0));
     CHECK(!conn.wants_input());
 }
 
@@ -323,9 +372,9 @@ TEST(http_conn_input_bounded_under_pipelining) {
             client_stream.erase(0, kReadChunk);
             ++reads;
             max_pending = std::max(max_pending, conn.pending_input_bytes());
-            CHECK(conn.process(out));  // rule (b)
+            CHECK(conn.process(out, kT0));  // rule (b)
         } else if (out.size() < hs::kOutputHighWater && conn.has_pending_input()) {
-            CHECK(conn.process(out));  // rule (c)
+            CHECK(conn.process(out, kT0));  // rule (c)
         }
         max_pending = std::max(max_pending, conn.pending_input_bytes());
 

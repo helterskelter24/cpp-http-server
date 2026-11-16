@@ -199,10 +199,8 @@ void PoolServer::run_connection(int raw_fd, Clock::time_point accepted) {
 // - Keep-alive: the idle clock starts at accept and restarts whenever a
 //   response has been fully sent. Bytes that do not start a request (blank
 //   lines before a request) do not restart it.
-// - Request: a request is in progress while the parser has started one or
-//   unparsed input is buffered. Its clock starts when the bytes that began it
-//   arrived and is not refreshed by later bytes, so a client trickling one
-//   header byte at a time still gets its 408.
+// - Request: HttpConn keeps the request clock (see request_in_progress() in
+//   http_conn.h), so both servers share one copy of that rule.
 void PoolServer::serve(int fd, Clock::time_point accepted) {
     // Queued when shutdown began: close without serving.
     if (stopping_.load()) return;
@@ -213,9 +211,7 @@ void PoolServer::serve(int fd, Clock::time_point accepted) {
     bool keep_open = true;   // false once process() has decided to close
     bool peer_done = false;  // recv() returned 0: the client sends nothing more
     bool draining = false;
-    bool request_in_progress = false;
     Clock::time_point idle_since = accepted;
-    Clock::time_point request_started{};
     char buf[kReadChunk];
 
     auto handle_input = [&](Clock::time_point arrived) {
@@ -223,18 +219,7 @@ void PoolServer::serve(int fd, Clock::time_point accepted) {
             conn.set_draining();  // responses from now on say Connection: close
             draining = true;
         }
-        unsigned served_before = conn.requests_served();
-        keep_open = conn.process(out);
-        // A finished request stops its clock; a request that begins in the
-        // same bytes gets a fresh one below.
-        if (conn.requests_served() != served_before) request_in_progress = false;
-        bool in_progress = conn.mid_request() || conn.has_pending_input();
-        if (!in_progress) {
-            request_in_progress = false;
-        } else if (!request_in_progress) {
-            request_in_progress = true;
-            request_started = arrived;
-        }
+        keep_open = conn.process(out, arrived);
     };
 
     for (;;) {
@@ -278,15 +263,15 @@ void PoolServer::serve(int fd, Clock::time_point accepted) {
         // otherwise never let a check run.
         Clock::time_point now = Clock::now();
         if (stopping_.load()) {
-            if (!request_in_progress) return;  // idle at shutdown: close now
+            if (!conn.request_in_progress()) return;  // idle at shutdown: close now
             if (!draining) {
                 conn.set_draining();
                 draining = true;
             }
             if (past_grace(now)) return;
         }
-        if (request_in_progress) {
-            if (now - request_started >= config_.request_timeout) {
+        if (conn.request_in_progress()) {
+            if (now - conn.request_started() >= config_.request_timeout) {
                 if (send_all(fd, conn.timeout_response())) stats_.record(408);
                 return;
             }
