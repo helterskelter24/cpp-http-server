@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <fstream>
 #include <memory>
 #include <string>
@@ -22,10 +23,16 @@ public:
     TempDir() {
         char tmpl[] = "/tmp/hs_static_XXXXXX";
         const char* made = mkdtemp(tmpl);
-        if (made) path_ = made;
+        if (made == nullptr) {
+            // Carrying on with an empty path would make every write() below
+            // land in "/" + rel, the filesystem root. Nothing in this file can
+            // run without the directory, so stop the whole test binary.
+            std::perror("mkdtemp /tmp/hs_static_XXXXXX");
+            std::abort();
+        }
+        path_ = made;
     }
     ~TempDir() {
-        if (path_.empty()) return;
         // Recursive delete of a directory this test created itself; the path
         // comes from mkdtemp and contains no quote characters.
         std::string cmd = "rm -rf '" + path_ + "'";
