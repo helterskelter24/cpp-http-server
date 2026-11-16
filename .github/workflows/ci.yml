@@ -44,6 +44,15 @@ jobs:
         if: matrix.sanitize != ''
         run: sudo sysctl vm.mmap_rnd_bits=28
 
+      # Formatting is checked once, in the release job. clang-format output can
+      # change between major versions; the code is formatted with version 18,
+      # the one ubuntu-latest (24.04) ships.
+      - name: Check formatting
+        if: matrix.sanitize == ''
+        run: |
+          clang-format --version
+          clang-format --dry-run -Werror $(git ls-files '*.cpp' '*.h')
+
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} -DHS_SANITIZE=${{ matrix.sanitize }}
 
