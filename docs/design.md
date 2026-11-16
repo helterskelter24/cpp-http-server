@@ -1,7 +1,7 @@
 # Concurrent HTTP/1.1 Server: Design
 
 Date: 2026-11-15
-Status: approved
+Status: implemented
 
 ## 1. Intent
 
@@ -197,3 +197,21 @@ Each can be changed without affecting the rest:
 ## 10. Left open for implementation
 
 Internal class boundaries beyond the layout above, buffer types and growth policy, the percentile method in the load generator (sorted samples or histogram), behaviour on `EMFILE` (log and back off), README wording and diagram, and whether a chart can be generated.
+
+## 11. Deviations and additions
+
+Where the implementation differs from the design above or goes beyond it:
+
+- **`HttpConn` (`src/server/http_conn.{h,cpp}`).** Parsing, routing, pipelining order, keep-alive decisions and output backpressure live in one socket-free class used by both servers, so they behave identically and are unit-tested without sockets. It has an explicit read contract: a server reads only while `wants_input()` is true and unsent output is below `kOutputHighWater` (1 MiB), calls `process()` after every read, and processes leftover input before reading again. This bounds buffered input to one read even against a client that pipelines without reading responses.
+- **Pool-mode timeouts.** Accepted sockets stay blocking with 100 ms `SO_RCVTIMEO`/`SO_SNDTIMEO` ticks. Deadlines are judged after every `recv`, not only after a timed-out one (a client sending one byte per tick would otherwise never be checked), and only after a read attempt, so a request sent while the connection waited in the pool queue is read before the idle clock, which starts at accept, can close it.
+- **Shutdown wake-up.** The signal handler sets an atomic flag and writes a process-wide eventfd that only `main` waits on; `main` then calls `Server::stop()`, which wakes the acceptor or each event loop through an eventfd of its own. Servers can therefore also be stopped from ordinary code and tests without a signal.
+- **Port-in-use check in epoll mode.** Sockets that all set `SO_REUSEPORT` share a port silently, so before opening its listeners the epoll server binds a probe socket without `SO_REUSEPORT` (`check_port_free`); a second instance on the same port fails at start-up instead of taking part of the connections.
+- **Accept after descriptor exhaustion.** Both modes log at most once per second and back off on `EMFILE`/`ENFILE`/`ENOBUFS`/`ENOMEM`. The epoll listening socket is edge-triggered, so it would never report the waiting connections again; each loop retries `accept4` on a 100 ms timer.
+- **Timer lists.** One deadline-ordered list per timeout kind (request, keep-alive, write) in each loop. Updates are a `splice` to the back; a short backward walk keeps a list sorted in the rare case of a deadline earlier than one already queued.
+- **Output buffers in epoll mode.** A connection's output buffer keeps its capacity while a burst of pipelined responses drains, and is released when the connection goes idle if it grew beyond 64 KiB.
+- **Static files.** Paths that resolve outside the root get 404 (never 403), so a client cannot probe what exists outside it; 403 is used only when a file inside the root cannot be opened (`EACCES`).
+- **Stricter parsing.** Bare LF line endings, obsolete header folding, a request target that is not origin-form, and more than one `Host` header all get 400.
+- **`/api/echo`** also returns the raw query string.
+- **Load generator.** Connects in a setup phase and starts all threads together through a start gate, so the connect ramp never falls into the warm-up or the measured window; an idle connection that cannot be opened aborts the run (exit 2). In CSV mode the error breakdown by kind goes to stderr. `bench/run.sh` records failed or skipped runs as rows instead of aborting, and pool mode is benchmarked with `--queue-capacity 4096`.
+- **Sanitizer builds.** The ASan build adds `-fno-sanitize-recover=undefined`, so undefined behaviour fails a test instead of only printing a report.
+- **CI.** The release, ASan and TSan configurations run as three parallel jobs of one matrix rather than release first and the sanitizers after it, and both sanitizer jobs lower `vm.mmap_rnd_bits` to 28, which the sanitizer runtimes of GCC 13 need on newer kernels.
