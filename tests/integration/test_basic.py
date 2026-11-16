@@ -56,6 +56,22 @@ def test_post_echo(srv):
 
 
 @shared
+def test_post_echo_binary_body_is_valid_json(srv):
+    # Bytes that are not UTF-8 must not leak into the JSON text: each one is
+    # replaced with U+FFFD. Decoding the body as UTF-8 first makes the check
+    # strict (json.loads on bytes would also guess other encodings).
+    body = b"\xff\xfe\x00\x01"
+    r = srv.request(req("POST", "/api/echo", body=body))
+    check(r.status == 200, r)
+    try:
+        doc = json.loads(r.body.decode("utf-8", errors="strict"), strict=True)
+    except ValueError as e:  # UnicodeDecodeError is a ValueError too
+        check(False, "echo returned invalid JSON: %r (%s)" % (r.body, e))
+    check(doc["body"] == "\ufffd\ufffd\x00\x01", doc)
+    check(doc["body_length"] == 4, doc)
+
+
+@shared
 def test_large_body_at_limit(srv):
     # Exactly the default --max-body-bytes (1 MiB): accepted whole, even
     # though it arrives over many reads.

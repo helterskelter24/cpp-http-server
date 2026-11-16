@@ -7,8 +7,10 @@
 
 namespace hs {
 
-// Escapes a string for use inside JSON quotes. Bytes >= 0x80 pass through, so
-// valid UTF-8 stays valid UTF-8.
+// Escapes a string for use inside JSON quotes. The result is always valid JSON:
+// valid UTF-8 sequences pass through unchanged, and every byte that is not part
+// of one (a stray continuation byte, a truncated or overlong sequence, an
+// encoded surrogate, anything above U+10FFFF) becomes the escape \ufffd.
 std::string json_escape(std::string_view s);
 
 // Builds JSON text in one buffer and inserts the commas itself. It does not
