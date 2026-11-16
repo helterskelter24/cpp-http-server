@@ -49,7 +49,6 @@ curl -s http://localhost:8080/api/users/42
 curl -s -X POST --data 'hello' http://localhost:8080/api/echo   # echoes method, path, body
 ```
 
-
 `./build/httpserver --mode pool` runs the thread-pool model; `--help` lists every flag.
 
 ## Architecture
@@ -98,17 +97,21 @@ the statistics counters and the logger. Handlers run inline on the loop.
    `add_connection` sets `TCP_NODELAY`, creates the connection, starts its
    keep-alive clock and registers `EPOLLIN | EPOLLRDHUP | EPOLLET`.
 2. Request bytes raise `EPOLLIN`. `drive` reads 16 KiB at a time until `EAGAIN`
-   (with edge triggering, stopping early would lose the event); each chunk goes
-   to `HttpConn::on_data` and `process`, which parses, dispatches through the
+   or until the output mark in step 3 stops it (with edge triggering, stopping
+   for any other reason would lose the event); each chunk goes to
+   `HttpConn::on_data` and `process`, which parses, dispatches through the
    router and appends the serialized response.
 3. `flush` sends at once. If the socket buffer fills, `update_interest` adds
    `EPOLLOUT`; the next writable event resumes sending, and `EPOLLOUT` is
    removed as soon as the output has drained. With 1 MiB or more waiting,
-   reading stops until the client catches up.
+   reading stops until the client catches up; the `EPOLLOUT` event that follows
+   brings the loop back to read the rest, since no new `EPOLLIN` edge will come
+   for bytes already in the socket.
 4. After every event `update_deadline` files the connection under its write,
-   request or keep-alive deadline. These are three lists ordered by deadline,
-   updated in O(1), and `epoll_wait` sleeps until the earliest one. An expired
-   request deadline queues a `408`; the other two close the connection.
+   request or keep-alive deadline. These are three lists ordered by deadline;
+   an update is usually a move to the back of a list, and `epoll_wait` sleeps
+   until the earliest deadline (at most 1 s). An expired request deadline
+   queues a `408`; the other two close the connection.
 5. The connection closes after `Connection: close`, the keep-alive request
    limit, a parse error, the client's FIN once its responses are sent, a reset,
    or a timeout. `close_conn` removes it from epoll and its timer list and
@@ -231,14 +234,15 @@ Every request opens a new TCP connection; latency includes connect and accept.
   connections the wait passes loadgen's 5 s timeout, so 629 requests are
   counted as errors and are absent from the percentiles. Epoll shares the
   threads fairly: its latency grows smoothly with concurrency (p99 0.36 ms at
-  16 connections, 17.9 ms at 1024), its max stays at 40 ms or below, and it has zero errors.
+  16 connections, 17.9 ms at 1024), its max stays at about 40 ms, and it has zero errors.
 - **New connection per request: no meaningful difference** (39k-44k vs
   43k-49k connections/s). Each connection carries one request, so no worker is
   pinned, and the single client thread, busy with `connect` and `close`, is the
   limit.
 - **Idle clients.** Epoll is unaffected by 256 or 1024 idle connections
-  (127k-132k req/s, p99 about 1.4 ms); an idle connection costs a descriptor
-  and a timer entry, not a thread. The pool serves nothing: every worker is
+  (127k-132k req/s, p99 about 1.4 ms); an idle connection costs a descriptor,
+  a small heap-allocated connection object, a timer-list entry and its kernel
+  socket buffers, not a thread. The pool serves nothing: every worker is
   pinned to an idle connection until the 5 s keep-alive timeout, and the
   active clients sit in the queue behind the remaining idle ones.
 
@@ -289,18 +293,22 @@ cmake --build build-tsan -j
 On recent kernels the sanitizer runtimes may fail at start-up unless
 `sudo sysctl vm.mmap_rnd_bits=28` is set first. The integration harness fails
 a test on any sanitizer report in a process's output, not only on its exit
-code. The GitHub Actions workflow (`.github/workflows/ci.yml`) runs the
-release, ASan and TSan configurations as three parallel jobs on every push and
-pull request.
+code. The GitHub Actions workflow (`.github/workflows/ci.yml`) defines the
+release, ASan and TSan configurations as three parallel jobs for every push and
+pull request; the release job also checks formatting with `clang-format`.
 
 ## Design decisions
 
 - **Two models in one binary** so the trade-off is measured rather than asserted.
   An epoll front end feeding a worker pool would only pay off with slow handlers.
-- **Edge-triggered epoll.** One notification per readiness change, at the
-  price of always draining to `EAGAIN`. The listening socket is edge-triggered
-  too, so a full descriptor table cannot make it spin; accepting is retried on
-  a 100 ms timer instead.
+- **Edge-triggered epoll.** A connection is reported again only when new
+  bytes arrive, so a loop that has deliberately stopped reading (at the 1 MiB
+  output mark) is not woken over and over for data it is not going to read, as
+  it would be with level triggering. The price is that every stop must be one
+  where another event is guaranteed: reading continues to `EAGAIN`, and after
+  an output-mark stop the `EPOLLOUT` event resumes it. The listening socket is
+  edge-triggered for the same reason, so a full descriptor table cannot make
+  it spin; accepting is retried on a 100 ms timer instead.
 - **A listening socket per event loop (`SO_REUSEPORT`)** instead of one acceptor
   handing descriptors to loops: no hand-off queue and no locks. A probe bind
   without `SO_REUSEPORT` makes a second instance on the same port fail instead
@@ -310,9 +318,11 @@ pull request.
 - **Strict parsing.** Bare LF, obsolete header folding, duplicate `Host`,
   conflicting `Content-Length` and any `Transfer-Encoding` are rejected rather
   than interpreted: lenient framing is how request smuggling happens.
-- **Timers as three ordered lists.** Every deadline of one kind is "now plus a
-  fixed duration", so a refreshed deadline belongs at the back: O(1) updates
-  without a heap.
+- **Timers as three ordered lists.** Every deadline of one kind is "a recent
+  event plus a fixed duration", so a refreshed deadline almost always belongs
+  at the back: usually an O(1) `splice`, without a heap. The exception is a
+  request clock that started while the connection waited on the write list;
+  a short backward walk keeps the list sorted then (O(n) in the worst case).
 - **Signal handling in two lines.** The handler only sets an atomic flag and
   writes an eventfd (both async-signal-safe); the real shutdown work runs in
   ordinary code.
@@ -329,8 +339,29 @@ with `Transfer-Encoding` get `501`), compression, range and conditional
 requests, `Expect: 100-continue`, virtual hosts, CGI, a configuration file,
 JSON request-body parsing, and platforms other than Linux. Also:
 
-- No per-event read budget: one client pipelining fast enough can monopolise
-  its event loop until the 1 MiB output mark stops it.
+- No per-event read budget: a client that pipelines requests and also reads
+  its responses fast enough never reaches the 1 MiB output mark, so it can
+  keep its event loop busy indefinitely; nothing bounds the work done for one
+  event.
+- The write timeout fires only when no byte at all is sent for
+  `--write-timeout`. A client that reads slowly but steadily is never cut off,
+  and the request timeout is not checked while output is waiting to be sent.
+- Memory per connection is bounded but not small: up to about 1 MiB of queued
+  output plus one whole response (for a static file, up to 64 MiB), plus a
+  partly received request (up to `--max-header-bytes` plus `--max-body-bytes`).
+  Together with the previous point, a slow reader can hold that memory for as
+  long as it keeps reading.
+- Epoll mode has no connection limit or load shedding: it accepts until the
+  descriptor limit, then retries on a timer.
+- Logging is a blocking `write` to stderr from the serving threads. If stderr is
+  a pipe whose reader falls behind (for example with `--access-log`), every
+  thread that logs waits for it.
+- Shutdown finishes the requests the server has already started on, but some
+  requests that have reached the machine are dropped: in epoll mode a
+  connection that looks idle is closed at once, even if a request is waiting
+  unread in its socket buffer, and in pool mode connections still waiting in
+  the queue are closed unserved. Those clients see the connection close or
+  reset rather than a `503`.
 - No lingering close: closing a connection with unread input can make the
   kernel send a reset that destroys the tail of the final response.
 - Static files are read fully into memory (up to 64 MiB), and the disk read
