@@ -247,16 +247,20 @@ def test_pipeline_flood_bounded(srv):
 @epoll_only
 @no_server
 def test_connections_spread_over_threads(ctx):
-    # Informational only: SO_REUSEPORT spreads connections by a hash of the
-    # client address and port, so the split varies from run to run. Each event
-    # loop logs how many connections it accepted when it exits.
+    # SO_REUSEPORT spreads connections by a hash of the client address and
+    # port, so the split varies from run to run, but every loop must take part.
+    # Each event loop logs how many connections it accepted when it exits.
+    # With 40 connections and 2 loops, a correct server sends all of them to
+    # one loop with probability 2 * 2**-40, so a failure here means a loop is
+    # not accepting (or not running at all).
     srv = ctx.start("--threads", "2", "--log-level", "debug")
     for _ in range(40):
         srv.request(get("/health", headers={"Connection": "close"}))
     srv.stop(signal.SIGTERM)
     counts = re.findall(r"event loop (\d+) exiting after accepting (\d+) connections", srv.stderr())
-    if counts:
-        print("    accepted per event loop: " + ", ".join("loop %s: %s" % c for c in counts))
-    else:
-        print("    per-loop counts not found in the server log")
+    print("    accepted per event loop: " + ", ".join("loop %s: %s" % c for c in counts))
+    per_loop = {int(loop): int(n) for loop, n in counts}
+    check(sorted(per_loop) == [0, 1], "expected exit lines from loops 0 and 1, got %r" % counts)
+    check(sum(per_loop.values()) == 40, "loops accepted %r, expected 40 in total" % per_loop)
+    check(min(per_loop.values()) >= 1, "one loop accepted nothing: %r" % per_loop)
 
