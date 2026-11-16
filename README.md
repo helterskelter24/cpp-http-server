@@ -34,7 +34,7 @@ against both modes; a few tests are specific to one mode.
 Needs Linux, CMake 3.16 or later and GCC 13 or Clang with C++17.
 
 ```sh
-git clone https://github.com/<your-username>/cpp-http-server.git
+git clone https://github.com/helterskelter24/cpp-http-server.git
 cd cpp-http-server
 cmake -S . -B build
 cmake --build build -j
